@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RIOT — Join a game</title>
+    <link rel="stylesheet" href="src/styles.css" />
+    <script src="assets/protocol/vendor/protobuf.min.js" defer></script>
+    <script src="src/wire.js" defer></script>
+    <script src="src/assets.js" defer></script>
+    <script src="src/connection.js" defer></script>
+    <script src="src/main.js" defer></script>
+  </head>
+  <body>
+    <main class="lobby">
+      <h1>RIOT</h1>
+      <p>Choose a username, then create or join a game.</p>
+
+      <form id="lobby-form">
+        <label for="username">Username</label>
+        <input
+          id="username"
+          name="username"
+          type="text"
+          placeholder="Your name"
+          maxlength="10"
+          autocomplete="nickname"
+          required
+        />
+
+        <fieldset id="character-picker">
+          <legend>Choose your character</legend>
+          <div class="character-options">
+            <label class="character-option">
+              <input type="radio" name="character_type" value="Blue" checked />
+              <img src="assets/characters/blue/player.png" alt="Blue character" width="48" height="58" />
+              <span>Blue</span>
+            </label>
+            <label class="character-option">
+              <input type="radio" name="character_type" value="Brown" />
+              <img src="assets/characters/brown/player.png" alt="Brown character" width="48" height="58" />
+              <span>Brown</span>
+            </label>
+            <label class="character-option">
+              <input type="radio" name="character_type" value="Green" />
+              <img src="assets/characters/green/player.png" alt="Green character" width="48" height="58" />
+              <span>Green</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <button id="create-game" type="button">Create Game</button>
+
+        <div class="divider">or join an existing game</div>
+
+        <label for="game-id">Game ID</label>
+        <div class="join-row">
+          <input
+            id="game-id"
+            name="game_id"
+            type="text"
+            placeholder="Paste game ID"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="join-game" type="button">Join Game</button>
+        </div>
+      </form>
+      <p id="status" role="status" aria-live="polite">Ready to connect.</p>
+      <div id="session" hidden>
+        <label for="joined-game-id">Your game ID — share it to invite players</label>
+        <input id="joined-game-id" type="text" readonly />
+        <p id="player-info"></p>
+        <button id="exit-game" type="button">Exit Game</button>
+      </div>
+      <section id="board" hidden aria-label="Game board">
+        <div class="board-heading">
+          <div class="health-hud">
+            <label for="health-bar">Health <span id="health-value">100 / 100</span></label>
+            <progress id="health-bar" max="100" value="100">100%</progress>
+          </div>
+          <div class="board-stats">
+            <span id="ammo-value">Ammo: —</span>
+            <span id="player-count">0 players</span>
+            <span id="fps">FPS: —</span>
+          </div>
+        </div>
+        <p id="kill-announcement" role="status" aria-live="polite"></p>
+        <div class="game-layout">
+          <div class="arena-frame">
+            <canvas id="arena" width="1000" height="600" tabindex="0" aria-label="Players on the arena map">
+              Your browser needs Canvas support to display the arena.
+            </canvas>
+            <aside class="minimap-panel" aria-label="Position radar">
+              <span>Radar</span>
+              <canvas id="minimap" width="192" height="72" aria-label="Your position is green, other players red, and the train blue"></canvas>
+              <small><i class="dot you"></i>You <i class="dot enemy"></i>Others <i class="dot train"></i>Train</small>
+            </aside>
+          </div>
+          <aside class="scoreboard-panel" aria-labelledby="scoreboard-title">
+            <h2 id="scoreboard-title">Scoreboard</h2>
+            <table>
+              <thead><tr><th scope="col">Player</th><th scope="col">Kills</th><th scope="col">Deaths</th></tr></thead>
+              <tbody id="scoreboard-body"></tbody>
+            </table>
+          </aside>
+        </div>
+        <p class="board-note">Move with WASD or arrow keys. Aim with the mouse. Hold F or left-click in the arena to fire. Step onto any train carriage to ride, heal, and refill ammo.</p>
+      </section>
+    </main>
+  </body>
+</html>

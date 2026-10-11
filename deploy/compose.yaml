@@ -1,0 +1,51 @@
+name: riot
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/server.Dockerfile
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "127.0.0.1:9000:9000"
+    init: true
+    stop_signal: SIGINT
+    stop_grace_period: 15s
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging: *logging
+
+  caddy:
+    build:
+      context: ..
+      dockerfile: deploy/client.Dockerfile
+    restart: unless-stopped
+    environment:
+      RIOT_SITE: ${RIOT_SITE:?Set RIOT_SITE in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  caddy-data:
+  caddy-config:

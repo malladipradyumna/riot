@@ -1,0 +1,13 @@
+.git
+.aws
+.agents
+.codex
+target
+server/target
+tools
+docs
+deploy/.env
+**/__pycache__
+*.key
+*.pem
+.env

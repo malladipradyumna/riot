@@ -1,0 +1,14 @@
+{$RIOT_SITE} {
+	encode zstd gzip
+	log
+	handle /ws {
+		reverse_proxy server:8000
+	}
+	handle /healthz {
+		reverse_proxy server:9000
+	}
+	handle {
+		root * /srv
+		file_server
+	}
+}

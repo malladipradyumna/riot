@@ -1,0 +1,13 @@
+target/
+server/target/
+deploy/.env
+**/__pycache__/
+tools/
+
+# Local credentials and machine configuration
+.aws/
+.agents/
+.codex/
+.env
+*.key
+*.pem

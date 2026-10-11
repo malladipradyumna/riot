@@ -1,0 +1,75 @@
+syntax = "proto3";
+package riot;
+
+enum CharacterType { Blue = 0; Brown = 1; Green = 2; }
+enum WeaponType { Pistol = 0; DesertEagle = 1; Ak47 = 2; RocketLauncher = 3; Flamethrower = 4; }
+message Position { float x = 1; float y = 2; }
+message JoinGame {
+  string client_request_id = 1;
+  uint64 timestamp_millis = 2;
+  string username = 3;
+  CharacterType character_type = 4;
+  optional string game_id = 5;
+}
+message ExitGame {
+  string client_request_id = 1; uint64 timestamp_millis = 2;
+  string username = 3; string game_id = 4; uint64 player_id = 5;
+}
+message PlayerInput {
+  string client_request_id = 1; uint64 timestamp_millis = 2;
+  uint64 player_id = 3; string game_id = 4;
+  bool up = 5; bool down = 6; bool left = 7; bool right = 8;
+  bool shooting = 9; float aim_angle = 10;
+}
+message ClientEnvelope {
+  oneof payload { JoinGame join_game = 1; ExitGame exit_game = 2; PlayerInput player_input = 3; }
+}
+message Welcome {
+  string server_request_id = 1; uint64 timestamp_millis = 2;
+  uint64 player_id = 3; string game_id = 4;
+}
+message Player {
+  uint64 player_id = 1; CharacterType character_type = 2; string username = 3;
+  float health = 4; float speed = 5; float aim_angle = 6; WeaponType weapon_type = 7; bool riding_train = 8; uint32 respawn_count = 9;
+  uint32 kills = 10; uint32 deaths = 11; uint32 ammo = 12; uint32 ammo_capacity = 13;
+}
+message Bullet { uint64 owner = 1; WeaponType weapon_type = 2; float aim_angle = 3; }
+message Weapon { WeaponType weapon_type = 1; }
+message Boundary { float width = 1; float height = 2; }
+message Train { float aim_angle = 1; float width = 2; float height = 3; float speed = 4; uint32 carriage_index = 5; uint32 corner_count = 6; }
+message ObjectState {
+  uint64 entity_id = 1; Position position = 2;
+  oneof object { Player player = 3; Bullet bullet = 4; Weapon weapon = 5; Boundary boundary = 6; Train train = 7; }
+}
+message InputAck { uint64 player_id = 1; string last_processed_client_request_id = 2; }
+// Identical for every recipient; encoded once per game update.
+message StateSnapshot {
+  string game_id = 1; uint64 timestamp_millis = 2;
+  repeated ObjectState objects = 3; repeated InputAck acknowledgements = 4;
+}
+message GunFired {
+  string server_request_id = 1; uint64 timestamp_millis = 2;
+  uint64 player_id = 3; string game_id = 4; WeaponType weapon_type = 5;
+  Position position = 6; float aim_angle = 7;
+}
+message PlayerKilled {
+  string game_id = 1; uint64 killer_id = 2; uint64 victim_id = 3;
+  string killer_name = 4; string victim_name = 5; WeaponType weapon_type = 6;
+}
+message PlayerDied {
+  string server_request_id = 1; uint64 timestamp_millis = 2; uint64 player_id = 3;
+  string game_id = 4; string last_processed_client_request_id = 5; uint64 dead_player_id = 6;
+}
+message PlayerLeft {
+  string server_request_id = 1; uint64 timestamp_millis = 2; uint64 player_id = 3;
+  string game_id = 4; string last_processed_client_request_id = 5; uint64 abandoned_player_id = 6;
+}
+message Error { string code = 1; }
+message Pong {}
+message ServerEnvelope {
+  oneof payload {
+    Welcome welcome = 1; StateSnapshot state_snapshot = 2; GunFired gun_fired = 3;
+    PlayerKilled player_killed = 4; Error error = 5; PlayerDied player_died = 6;
+    PlayerLeft player_left = 7; Pong pong = 8;
+  }
+}

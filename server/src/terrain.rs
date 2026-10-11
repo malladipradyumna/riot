@@ -1,0 +1,89 @@
+use crate::types::Position;
+use std::sync::OnceLock;
+
+pub const TILE_SIZE: f32 = 50.0;
+static MAP: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
+
+pub fn load() -> &'static Vec<Vec<u8>> {
+    MAP.get_or_init(|| {
+        let assets = std::env::var_os("RIOT_ASSETS_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets"))
+            });
+        let text = std::fs::read_to_string(assets.join("maps/arena.txt"))
+            .expect("Cannot load assets/maps/arena.txt");
+        let rows: Vec<Vec<u8>> = text.lines().map(|line| line.as_bytes().to_vec()).collect();
+        assert_eq!(rows.len(), 36, "Map must have 36 rows");
+        assert!(
+            rows.iter()
+                .all(|row| row.len() == 96 && row.iter().all(|tile| b".fws#tbu".contains(tile))),
+            "Map must have 96 columns and valid terrain symbols"
+        );
+        rows
+    })
+}
+
+pub fn speed(position: Position) -> f32 {
+    let tile = tile(position.x, position.y);
+    match tile {
+        b'f' => 120.0,
+        b'w' => 70.0,
+        b's' => 150.0,
+        b'u' => 160.0,
+        b'#' => 0.0,
+        _ => 200.0,
+    }
+}
+
+pub fn tile(x: f32, y: f32) -> u8 {
+    if x < 0.0 || y < 0.0 {
+        return b'#';
+    }
+    load()
+        .get((y / TILE_SIZE) as usize)
+        .and_then(|row| row.get((x / TILE_SIZE) as usize))
+        .copied()
+        .unwrap_or(b'#')
+}
+
+pub fn can_stand(position: Position, radius: f32) -> bool {
+    let min_x = ((position.x - radius) / TILE_SIZE).floor() as i32;
+    let max_x = ((position.x + radius) / TILE_SIZE).floor() as i32;
+    let min_y = ((position.y - radius) / TILE_SIZE).floor() as i32;
+    let max_y = ((position.y + radius) / TILE_SIZE).floor() as i32;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            if tile(x as f32 * TILE_SIZE, y as f32 * TILE_SIZE) != b'#' {
+                continue;
+            }
+            let nearest_x = position
+                .x
+                .clamp(x as f32 * TILE_SIZE, (x + 1) as f32 * TILE_SIZE);
+            let nearest_y = position
+                .y
+                .clamp(y as f32 * TILE_SIZE, (y + 1) as f32 * TILE_SIZE);
+            if (position.x - nearest_x).powi(2) + (position.y - nearest_y).powi(2)
+                <= radius * radius
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub fn segment_blocked(start: Position, end: Position, radius: f32) -> bool {
+    let distance = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
+    let steps = (distance / radius.max(1.0)).ceil().max(1.0) as usize;
+    (0..=steps).any(|step| {
+        let fraction = step as f32 / steps as f32;
+        !can_stand(
+            Position {
+                x: start.x + (end.x - start.x) * fraction,
+                y: start.y + (end.y - start.y) * fraction,
+            },
+            radius,
+        )
+    })
+}
