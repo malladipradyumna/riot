@@ -202,6 +202,15 @@ function interpolatedEntities(now, kind) {
   for (const [id, player] of currentSnapshot[kind]) {
     const start = before[kind].get(id);
     const end = after[kind].get(id);
+    if (kind === 'bullets') {
+      // New bullets must wait for the delayed playback timeline. Showing their
+      // newest position first makes them jump backward when interpolation starts.
+      if (!start || displayTime < before.serverTime) continue;
+      if (!end) {
+        players.push(start);
+        continue;
+      }
+    }
     if (
       !start ||
       !end ||
