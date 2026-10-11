@@ -1,6 +1,10 @@
 function serverWebSocketUrl(location) {
   // Python's local static server uses a separate game port; deployment uses Caddy.
-  if (location.protocol === 'https:' || !location.port || location.port === '80') {
+  if (
+    location.protocol === 'https:' ||
+    !location.port ||
+    location.port === '80'
+  ) {
     return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
   }
   const host = location.hostname || '127.0.0.1';

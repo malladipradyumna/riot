@@ -89,7 +89,8 @@ pub fn platforms(world: &hecs::World) -> Vec<(Position, f32)> {
         .map(|(position, train)| (*position, train.angle))
         .collect()
 }
-pub fn tick(world: &mut hecs::World) {
+pub fn tick(world: &mut hecs::World) -> Option<Position> {
+    let mut whistle = None;
     let mut movement = Vec::new();
     for (position, train) in world.query_mut::<(&mut Position, &mut Train)>() {
         let old = *position;
@@ -99,6 +100,7 @@ pub fn tick(world: &mut hecs::World) {
         (*position, train.angle) = route(train.distance);
         if train.carriage_index == 0 && angle != train.angle {
             train.corner_count = train.corner_count.wrapping_add(1);
+            whistle = Some(*position);
         }
         movement.push((old, angle, *position, train.angle));
     }
@@ -117,6 +119,7 @@ pub fn tick(world: &mut hecs::World) {
             }
         }
     }
+    whistle
 }
 
 // Called once per simulation tick, after movement, never once per carriage.

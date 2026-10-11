@@ -1,0 +1,7 @@
+Gun Construction Kit — SpriteAttack
+Source: https://opengameart.org/content/gun-construction-kit
+License: CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Original SVG sheets, with page backgrounds removed for transparent sprites.
+Weapon crops and rocket orientation are selected in client/src/assets.js.

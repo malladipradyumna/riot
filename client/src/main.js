@@ -6,6 +6,8 @@ const joinButton = document.querySelector('#join-game');
 const status = document.querySelector('#status');
 const session = document.querySelector('#session');
 const joinedGameId = document.querySelector('#joined-game-id');
+const copyGameIdButton = document.querySelector('#copy-game-id');
+const damageFlash = document.querySelector('#damage-flash');
 const playerInfo = document.querySelector('#player-info');
 const exitButton = document.querySelector('#exit-game');
 const lobby = document.querySelector('.lobby');
@@ -21,6 +23,8 @@ const healthBar = document.querySelector('#health-bar');
 const healthValue = document.querySelector('#health-value');
 const ammoValue = document.querySelector('#ammo-value');
 const scoreboardBody = document.querySelector('#scoreboard-body');
+const roundLabel = document.querySelector('#round-label');
+const roundCountdown = document.querySelector('#round-countdown');
 
 const MAP_WIDTH = 4800;
 const MAP_HEIGHT = 1800;
@@ -40,6 +44,41 @@ let mousePosition = null;
 let displayedLocalPlayer = null;
 let mouseFiring = false;
 let killAnnouncementTimer = null;
+let copyFeedbackTimer = null;
+let damageAnimation = null;
+let lastLocalHealth = null;
+let lastLocalRespawn = null;
+
+function showDamageFlash() {
+  damageAnimation?.cancel();
+  damageAnimation = damageFlash.animate([{ opacity: 1 }, { opacity: 0 }], {
+    duration: 1000,
+    easing: 'ease-out',
+  });
+}
+
+copyGameIdButton.addEventListener('click', async () => {
+  if (!joinedGameId.value) return;
+  let copied = false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(joinedGameId.value);
+      copied = true;
+    }
+  } catch (_) {
+    /* Plain HTTP can block Clipboard API; use the selected-input fallback. */
+  }
+  if (!copied) {
+    joinedGameId.focus();
+    joinedGameId.select();
+    copied = document.execCommand('copy');
+  }
+  copyGameIdButton.textContent = copied ? 'Copied!' : 'Select + copy';
+  clearTimeout(copyFeedbackTimer);
+  copyFeedbackTimer = setTimeout(() => {
+    copyGameIdButton.textContent = 'Copy';
+  }, 1500);
+});
 
 function updateAim(player) {
   if (!player) return;
@@ -48,8 +87,12 @@ function updateAim(player) {
   if (mousePosition) {
     const bounds = canvas.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
-    targetX = camera.x + (mousePosition.x - bounds.left) / bounds.width * canvas.width;
-    targetY = camera.y + (mousePosition.y - bounds.top) / bounds.height * canvas.height;
+    targetX =
+      camera.x +
+      ((mousePosition.x - bounds.left) / bounds.width) * canvas.width;
+    targetY =
+      camera.y +
+      ((mousePosition.y - bounds.top) / bounds.height) * canvas.height;
   } else if (aimAngle !== null) {
     return; // Keep the initial direction until the mouse is moved over the arena.
   }
@@ -67,11 +110,25 @@ function storeSnapshot(snapshot) {
   const players = new Map();
   const bullets = new Map();
   const trains = new Map();
+  const weapons = new Map();
   for (const object of snapshot.objects) {
     const player = object.object.Player;
     if (!player) {
       if (object.object.Train) {
-        trains.set(object.entity_id, { ...object.object.Train, entityId:object.entity_id, x:object.position.x, y:object.position.y });
+        trains.set(object.entity_id, {
+          ...object.object.Train,
+          entityId: object.entity_id,
+          x: object.position.x,
+          y: object.position.y,
+        });
+      }
+      if (object.object.Weapon) {
+        weapons.set(object.entity_id, {
+          ...object.object.Weapon,
+          entityId: object.entity_id,
+          x: object.position.x,
+          y: object.position.y,
+        });
       }
       if (object.object.Bullet) {
         bullets.set(object.entity_id, {
@@ -92,10 +149,34 @@ function storeSnapshot(snapshot) {
       y: object.position.y,
     });
   }
-  snapshots.push({ serverTime: snapshot.timestamp_millis, receivedAt, players, bullets, trains });
+  const round = snapshot.round;
+  if (
+    latest &&
+    round &&
+    (latest.round?.number !== round.number ||
+      latest.round?.intermission !== round.intermission)
+  ) {
+    snapshots.length = 0;
+    pressedKeys.clear();
+    mouseFiring = false;
+    stopTrainAudio();
+    stopTerrainAudio();
+    clearTimeout(killAnnouncementTimer);
+    document.querySelector('#kill-announcement').textContent = '';
+  }
+  snapshots.push({
+    serverTime: snapshot.timestamp_millis,
+    receivedAt,
+    players,
+    bullets,
+    trains,
+    weapons,
+    round,
+  });
   if (snapshots.length > MAX_SNAPSHOTS) snapshots.shift();
   // Anchor server time to the browser's monotonic clock, independent of its wall clock.
-  if (serverClockOffset === null) serverClockOffset = snapshot.timestamp_millis - receivedAt;
+  if (serverClockOffset === null)
+    serverClockOffset = snapshot.timestamp_millis - receivedAt;
 }
 
 function interpolatedEntities(now, kind) {
@@ -112,19 +193,33 @@ function interpolatedEntities(now, kind) {
     }
   }
   const span = after.serverTime - before.serverTime;
-  const fraction = span > 0 ? Math.max(0, Math.min(1, (displayTime - before.serverTime) / span)) : 0;
+  const fraction =
+    span > 0
+      ? Math.max(0, Math.min(1, (displayTime - before.serverTime) / span))
+      : 0;
   const players = [];
   // Use the newest membership so joins and exits appear immediately.
   for (const [id, player] of currentSnapshot[kind]) {
     const start = before[kind].get(id);
     const end = after[kind].get(id);
-    if (!start || !end || (kind === 'players' && (start.respawn_count !== player.respawn_count || end.respawn_count !== player.respawn_count))) {
+    if (
+      !start ||
+      !end ||
+      (kind === 'players' &&
+        (start.respawn_count !== player.respawn_count ||
+          end.respawn_count !== player.respawn_count))
+    ) {
       players.push(player);
       continue;
     }
     let x = start.x + (end.x - start.x) * fraction;
     let y = start.y + (end.y - start.y) * fraction;
-    if (kind === 'players' && !player.riding_train && fraction > 0 && fraction < 1) {
+    if (
+      kind === 'players' &&
+      !player.riding_train &&
+      fraction > 0 &&
+      fraction < 1
+    ) {
       const dx = end.x - start.x;
       const dy = end.y - start.y;
       const distance = Math.hypot(dx, dy);
@@ -132,16 +227,19 @@ function interpolatedEntities(now, kind) {
         // Integrate terrain speed along the known snapshot path, never past its endpoint.
         x = start.x;
         y = start.y;
-        let remaining = span * fraction / 1000;
+        let remaining = (span * fraction) / 1000;
         let traveled = 0;
         const initialTerrain = terrainAt(x, y);
+        const speedMultiplier =
+          (start.speed ?? TERRAIN_SPEEDS[initialTerrain]) /
+          TERRAIN_SPEEDS[initialTerrain];
         while (remaining > 0 && traveled < distance) {
           const dt = Math.min(remaining, 1 / 120);
           const tile = terrainAt(x, y);
-          const speed = tile === initialTerrain ? start.speed ?? TERRAIN_SPEEDS[tile] : TERRAIN_SPEEDS[tile];
+          const speed = TERRAIN_SPEEDS[tile] * speedMultiplier;
           traveled = Math.min(distance, traveled + speed * dt);
-          x = start.x + dx / distance * traveled;
-          y = start.y + dy / distance * traveled;
+          x = start.x + (dx / distance) * traveled;
+          y = start.y + (dy / distance) * traveled;
           remaining -= dt;
         }
       }
@@ -159,29 +257,70 @@ function drawFrame(now) {
     currentSnapshot = latest;
     lastProcessedSnapshotTimestamp = latest.serverTime;
     renderScoreboard(currentSnapshot.players);
-    updateTrainAudio([...latest.trains.values()], latest.players.get(localPlayerId));
+    const local = currentSnapshot.players.get(localPlayerId);
+    if (local) {
+      if (
+        lastLocalHealth !== null &&
+        lastLocalRespawn === local.respawn_count
+      ) {
+        if (local.health < lastLocalHealth) showDamageFlash();
+      }
+      lastLocalHealth = local.health;
+      lastLocalRespawn = local.respawn_count;
+    }
   }
+  const round = currentSnapshot.round;
+  const intermission = Boolean(round?.intermission);
+  board.classList.toggle('intermission', intermission);
+  roundLabel.textContent = intermission
+    ? `Round ${round.number} complete · Next round in`
+    : `Round ${round?.number ?? 1} · Time left`;
+  const secondsLeft = round
+    ? Math.max(
+        0,
+        Math.ceil((round.ends_at_millis - (now + serverClockOffset)) / 1000),
+      )
+    : 300;
+  roundCountdown.textContent = intermission
+    ? String(secondsLeft)
+    : `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`;
+  document.querySelector('#scoreboard-title').textContent = intermission
+    ? 'Round results'
+    : 'Scoreboard';
+  if (intermission) return;
   // Even without a new snapshot, advance the interpolated position each frame.
-  renderPlayers(interpolatedEntities(now, 'players'), interpolatedEntities(now, 'bullets'), interpolatedEntities(now, 'trains'));
+  const players = interpolatedEntities(now, 'players');
+  const trains = interpolatedEntities(now, 'trains');
+  renderPlayers(players, interpolatedEntities(now, 'bullets'), trains, [
+    ...currentSnapshot.weapons.values(),
+  ]);
+  updateTrainAudio(trains, displayedLocalPlayer);
+  updateTerrainAudio(players, displayedLocalPlayer);
   if (fpsStartedAt === null) fpsStartedAt = now;
   fpsFrames += 1;
   const elapsed = now - fpsStartedAt;
   if (elapsed >= 1000) {
-    fpsDisplay.textContent = `FPS: ${Math.round(fpsFrames * 1000 / elapsed)}`;
+    fpsDisplay.textContent = `FPS: ${Math.round((fpsFrames * 1000) / elapsed)}`;
     fpsFrames = 0;
     fpsStartedAt = now;
   }
 }
 
 function renderScoreboard(players) {
-  const ranked = [...players.values()].sort((a, b) =>
-    (b.kills ?? 0) - (a.kills ?? 0) ||
-    (a.deaths ?? 0) - (b.deaths ?? 0) || a.player_id - b.player_id
+  const ranked = [...players.values()].sort(
+    (a, b) =>
+      (b.kills ?? 0) - (a.kills ?? 0) ||
+      (a.deaths ?? 0) - (b.deaths ?? 0) ||
+      a.player_id - b.player_id,
   );
-  const rows = ranked.map(player => {
+  const rows = ranked.map((player) => {
     const row = document.createElement('tr');
     row.classList.toggle('local-player', player.player_id === localPlayerId);
-    for (const value of [player.username, player.kills ?? 0, player.deaths ?? 0]) {
+    for (const value of [
+      player.username,
+      player.kills ?? 0,
+      player.deaths ?? 0,
+    ]) {
       const cell = document.createElement('td');
       cell.textContent = String(value);
       row.append(cell);
@@ -205,6 +344,15 @@ function resetRendering() {
   healthValue.textContent = '100 / 100';
   ammoValue.textContent = 'Ammo: —';
   stopTrainAudio();
+  stopTerrainAudio();
+  damageAnimation?.cancel();
+  damageAnimation = null;
+  lastLocalHealth = null;
+  lastLocalRespawn = null;
+  healthBar.classList.remove('on-train');
+  board.classList.remove('intermission');
+  clearTimeout(copyFeedbackTimer);
+  copyGameIdButton.textContent = 'Copy';
   scoreboardBody.replaceChildren();
   minimapContext.clearRect(0, 0, minimap.width, minimap.height);
   clearTimeout(killAnnouncementTimer);
@@ -218,12 +366,18 @@ function resetRendering() {
   mouseFiring = false;
 }
 
-function playerColor(playerId) {
-  const player = currentSnapshot?.players.get(playerId);
-  return { Blue: '#74b9ff', Brown: '#d5a57c', Green: '#84ce8b' }[player?.character_type] || '#74b9ff';
+function drawWeaponSprite(sprite, weapon, x, y, width, height) {
+  context.save();
+  context.translate(x, y);
+  if (weapon.spriteFlipped) {
+    context.translate(width, 0);
+    context.scale(-1, 1);
+  }
+  context.drawImage(sprite, ...weapon.spriteSource, 0, 0, width, height);
+  context.restore();
 }
 
-function renderPlayers(players, bullets, trains) {
+function renderPlayers(players, bullets, trains, weapons) {
   if (!context) return;
   const authoritativePlayer = currentSnapshot?.players.get(localPlayerId);
   const health = Math.max(0, Math.min(100, authoritativePlayer?.health ?? 100));
@@ -232,9 +386,13 @@ function renderPlayers(players, bullets, trains) {
     : 'Ammo: —';
   healthBar.value = health;
   healthValue.textContent = `${Math.ceil(health)} / 100`;
-  healthBar.classList.toggle('low-health', health <= 25);
+  healthBar.classList.toggle(
+    'on-train',
+    Boolean(authoritativePlayer?.riding_train),
+  );
   renderMinimap(players, trains);
-  displayedLocalPlayer = players.find(player => player.player_id === localPlayerId) || null;
+  displayedLocalPlayer =
+    players.find((player) => player.player_id === localPlayerId) || null;
   if (displayedLocalPlayer) {
     camera.x = displayedLocalPlayer.x - canvas.width / 2;
     camera.y = displayedLocalPlayer.y - canvas.height / 2;
@@ -242,14 +400,40 @@ function renderPlayers(players, bullets, trains) {
   }
   context.fillStyle = '#191c17';
   context.fillRect(0, 0, canvas.width, canvas.height);
-  for (let row = Math.max(0, Math.floor(camera.y / TILE_SIZE)); row < Math.min(terrainRows.length, Math.ceil((camera.y + canvas.height) / TILE_SIZE)); row++) {
-    for (let col = Math.max(0, Math.floor(camera.x / TILE_SIZE)); col < Math.min(terrainRows[row].length, Math.ceil((camera.x + canvas.width) / TILE_SIZE)); col++) {
+  for (
+    let row = Math.max(0, Math.floor(camera.y / TILE_SIZE));
+    row <
+    Math.min(
+      terrainRows.length,
+      Math.ceil((camera.y + canvas.height) / TILE_SIZE),
+    );
+    row++
+  ) {
+    for (
+      let col = Math.max(0, Math.floor(camera.x / TILE_SIZE));
+      col <
+      Math.min(
+        terrainRows[row].length,
+        Math.ceil((camera.x + canvas.width) / TILE_SIZE),
+      );
+      col++
+    ) {
       const image = assetImages.get(TERRAIN_ASSETS[terrainRows[row][col]]);
       if (image) {
         context.save();
-        context.translate((col + 0.5) * TILE_SIZE - camera.x, (row + 0.5) * TILE_SIZE - camera.y);
-        if (terrainRows[row][col] === 't' && (row === 6 || row === 30)) context.rotate(Math.PI / 2);
-        context.drawImage(image, -TILE_SIZE / 2, -TILE_SIZE / 2, TILE_SIZE, TILE_SIZE);
+        context.translate(
+          (col + 0.5) * TILE_SIZE - camera.x,
+          (row + 0.5) * TILE_SIZE - camera.y,
+        );
+        if (terrainRows[row][col] === 't' && (row === 6 || row === 30))
+          context.rotate(Math.PI / 2);
+        context.drawImage(
+          image,
+          -TILE_SIZE / 2,
+          -TILE_SIZE / 2,
+          TILE_SIZE,
+          TILE_SIZE,
+        );
         context.restore();
       }
     }
@@ -261,21 +445,62 @@ function renderPlayers(players, bullets, trains) {
   context.textAlign = 'center';
 
   for (const train of trains) {
-    const trainSprite = assetImages.get(train.carriage_index > 0 ? 'assets/props/train-carriage.svg' : 'assets/props/train.svg');
+    const trainSprite = assetImages.get(
+      train.carriage_index > 0
+        ? 'assets/props/train-carriage.svg'
+        : 'assets/props/train.svg',
+    );
     const x = train.x - camera.x;
     const y = train.y - camera.y;
-    if (!trainSprite || x < -180 || y < -180 || x > canvas.width + 180 || y > canvas.height + 180) continue;
+    if (
+      !trainSprite ||
+      x < -180 ||
+      y < -180 ||
+      x > canvas.width + 180 ||
+      y > canvas.height + 180
+    )
+      continue;
     context.save();
     context.translate(x, y);
     context.rotate(train.aim_angle);
-    context.drawImage(trainSprite, -train.width / 2, -train.height / 2, train.width, train.height);
+    context.drawImage(
+      trainSprite,
+      -train.width / 2,
+      -train.height / 2,
+      train.width,
+      train.height,
+    );
     context.restore();
+  }
+
+  const serverNow = performance.now() + serverClockOffset;
+  for (const pickup of weapons) {
+    if (pickup.expires_at_millis <= serverNow) continue;
+    const x = pickup.x - camera.x;
+    const y = pickup.y - camera.y;
+    if (x < -26 || y < -26 || x > canvas.width + 26 || y > canvas.height + 26)
+      continue;
+    const asset = WEAPON_ASSETS[pickup.weapon_type];
+    const sprite = asset && assetImages.get(asset.sprite);
+    if (!sprite) continue;
+    context.fillStyle = '#242419';
+    context.fillRect(x - 22, y - 22, 44, 44);
+    drawWeaponSprite(sprite, asset, x - 16, y - 8, 32, 16);
+    const progress = Math.max(
+      0,
+      Math.min(
+        1,
+        1 - (pickup.expires_at_millis - serverNow) / pickup.lifetime_millis,
+      ),
+    );
+    drawPickupTimer(x, y, progress);
   }
 
   for (const bullet of bullets) {
     const x = bullet.x - camera.x;
     const y = bullet.y - camera.y;
-    if (x < -12 || y < -12 || x > canvas.width + 12 || y > canvas.height + 12) continue;
+    if (x < -12 || y < -12 || x > canvas.width + 12 || y > canvas.height + 12)
+      continue;
     const sprite = bulletSprite(bullet.weapon_type, '#ffd34d');
     if (!sprite) continue;
     context.save();
@@ -290,10 +515,11 @@ function renderPlayers(players, bullets, trains) {
     const x = player.x - camera.x;
     const y = player.y - camera.y;
     const isLocal = player.player_id === localPlayerId;
-    if (x < -40 || y < -40 || x > canvas.width + 40 || y > canvas.height + 40) continue;
-    const color = playerColor(player.player_id);
-    const angle = isLocal ? aimAngle ?? 0 : player.aim_angle;
-    const character = CHARACTER_ASSETS[player.character_type] || CHARACTER_ASSETS.Blue;
+    if (x < -40 || y < -40 || x > canvas.width + 40 || y > canvas.height + 40)
+      continue;
+    const angle = isLocal ? (aimAngle ?? 0) : player.aim_angle;
+    const character =
+      CHARACTER_ASSETS[player.character_type] || CHARACTER_ASSETS.Blue;
     const bodySprite = assetImages.get(character.sprite);
     const weapon = WEAPON_ASSETS[player.weapon_type];
     const gunSprite = weapon && assetImages.get(weapon.sprite);
@@ -301,20 +527,17 @@ function renderPlayers(players, bullets, trains) {
     context.translate(x, y);
     context.rotate(angle);
     if (bodySprite) context.drawImage(bodySprite, -11, -14, 22, 28);
-    if (gunSprite) context.drawImage(gunSprite, 6, 2, weapon.width || 14, weapon.height || 7);
+    if (gunSprite)
+      drawWeaponSprite(
+        gunSprite,
+        weapon,
+        6,
+        2,
+        weapon.width || 14,
+        weapon.height || 7,
+      );
     context.restore();
 
-    const tipX = x + Math.cos(angle) * 36;
-    const tipY = y + Math.sin(angle) * 36;
-    context.strokeStyle = color;
-    context.lineWidth = 2;
-    context.beginPath();
-    context.moveTo(x + Math.cos(angle) * 22, y + Math.sin(angle) * 22);
-    context.lineTo(tipX, tipY);
-    context.moveTo(tipX - Math.cos(angle - Math.PI / 6) * 7, tipY - Math.sin(angle - Math.PI / 6) * 7);
-    context.lineTo(tipX, tipY);
-    context.lineTo(tipX - Math.cos(angle + Math.PI / 6) * 7, tipY - Math.sin(angle + Math.PI / 6) * 7);
-    context.stroke();
     context.fillStyle = '#e4d3a1';
     const label = `${player.username}${isLocal ? ' (you)' : ''}`;
     const halfWidth = context.measureText(label).width / 2 + 4;
@@ -323,19 +546,58 @@ function renderPlayers(players, bullets, trains) {
   }
 }
 
+function drawPickupTimer(x, y, progress) {
+  const size = 44;
+  context.strokeStyle = '#75664a';
+  context.lineWidth = 3;
+  context.strokeRect(x - size / 2, y - size / 2, size, size);
+  const corners = [
+    [x - 22, y - 22],
+    [x + 22, y - 22],
+    [x + 22, y + 22],
+    [x - 22, y + 22],
+    [x - 22, y - 22],
+  ];
+  let remaining = progress * size * 4;
+  context.strokeStyle = '#f1ca69';
+  context.beginPath();
+  context.moveTo(...corners[0]);
+  for (let side = 0; side < 4 && remaining > 0; side++) {
+    const fraction = Math.min(1, remaining / size);
+    const [startX, startY] = corners[side];
+    const [endX, endY] = corners[side + 1];
+    context.lineTo(
+      startX + (endX - startX) * fraction,
+      startY + (endY - startY) * fraction,
+    );
+    remaining -= size;
+  }
+  context.stroke();
+}
+
 function renderMinimap(players, trains) {
   minimapContext.fillStyle = '#10180f';
   minimapContext.fillRect(0, 0, minimap.width, minimap.height);
   for (const train of trains) {
     minimapContext.fillStyle = '#61aaf4';
-    minimapContext.fillRect(train.x / MAP_WIDTH * minimap.width - 3, train.y / MAP_HEIGHT * minimap.height - 2, 6, 4);
+    minimapContext.fillRect(
+      (train.x / MAP_WIDTH) * minimap.width - 3,
+      (train.y / MAP_HEIGHT) * minimap.height - 2,
+      6,
+      4,
+    );
   }
   // Draw the local marker last so it stays visible when players overlap.
   for (const local of [false, true]) {
     for (const player of players) {
       if ((player.player_id === localPlayerId) !== local) continue;
       minimapContext.fillStyle = local ? '#82d965' : '#ec6859';
-      minimapContext.fillRect(player.x / MAP_WIDTH * minimap.width - 2, player.y / MAP_HEIGHT * minimap.height - 2, 4, 4);
+      minimapContext.fillRect(
+        (player.x / MAP_WIDTH) * minimap.width - 2,
+        (player.y / MAP_HEIGHT) * minimap.height - 2,
+        4,
+        4,
+      );
     }
   }
 }
@@ -345,7 +607,19 @@ let socket = null;
 let inputTimer = null;
 let leavingGame = false;
 const pressedKeys = new Set();
-const gameKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyF']);
+const gameKeys = new Set([
+  'KeyW',
+  'KeyA',
+  'KeyS',
+  'KeyD',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'KeyF',
+  'ShiftLeft',
+  'ShiftRight',
+]);
 
 function stopInput() {
   clearInterval(inputTimer);
@@ -355,7 +629,15 @@ function stopInput() {
 }
 
 function sendInput() {
-  if (!socket || socket.readyState !== WebSocket.OPEN || localPlayerId === null || leavingGame || aimAngle === null) return;
+  if (
+    !socket ||
+    socket.readyState !== WebSocket.OPEN ||
+    localPlayerId === null ||
+    leavingGame ||
+    currentSnapshot?.round?.intermission ||
+    aimAngle === null
+  )
+    return;
   updateAim(displayedLocalPlayer);
   /** @type {import('./protocol.js').ClientMessage} */
   const message = {
@@ -369,6 +651,7 @@ function sendInput() {
       left: pressedKeys.has('KeyA') || pressedKeys.has('ArrowLeft'),
       right: pressedKeys.has('KeyD') || pressedKeys.has('ArrowRight'),
       shooting: pressedKeys.has('KeyF') || mouseFiring,
+      sprinting: pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight'),
       aim_angle: aimAngle,
     },
   };
@@ -376,16 +659,36 @@ function sendInput() {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (localPlayerId === null || leavingGame || !gameKeys.has(event.code)) return;
-  if (event.target instanceof HTMLInputElement && !event.target.readOnly && !event.target.disabled) return;
+  if (
+    localPlayerId === null ||
+    leavingGame ||
+    currentSnapshot?.round?.intermission ||
+    !gameKeys.has(event.code)
+  )
+    return;
+  if (
+    event.target instanceof HTMLInputElement &&
+    !event.target.readOnly &&
+    !event.target.disabled
+  )
+    return;
   event.preventDefault();
+  unlockAudio();
   pressedKeys.add(event.code);
   if (event.code === 'KeyF' && !event.repeat) sendInput();
 });
 window.addEventListener('keyup', (event) => {
   pressedKeys.delete(event.code);
   if (event.code === 'KeyF') sendInput();
-  if (localPlayerId !== null && gameKeys.has(event.code) && !(event.target instanceof HTMLInputElement && !event.target.readOnly && !event.target.disabled)) {
+  if (
+    localPlayerId !== null &&
+    gameKeys.has(event.code) &&
+    !(
+      event.target instanceof HTMLInputElement &&
+      !event.target.readOnly &&
+      !event.target.disabled
+    )
+  ) {
     event.preventDefault();
   }
 });
@@ -400,6 +703,9 @@ canvas.addEventListener('mousemove', (event) => {
   if (localPlayerId === null || leavingGame) return;
   mousePosition = { x: event.clientX, y: event.clientY };
   updateAim(displayedLocalPlayer);
+});
+canvas.addEventListener('pointerdown', () => {
+  if (localPlayerId !== null) unlockAudio();
 });
 canvas.addEventListener('mousedown', (event) => {
   if (event.button !== 0 || localPlayerId === null || leavingGame) return;
@@ -423,20 +729,23 @@ document.addEventListener('visibilitychange', () => {
 });
 
 exitButton.addEventListener('click', () => {
-  if (!socket || socket.readyState !== WebSocket.OPEN || localPlayerId === null) return;
+  if (!socket || socket.readyState !== WebSocket.OPEN || localPlayerId === null)
+    return;
   leavingGame = true;
   exitButton.disabled = true;
   stopInput();
   resetRendering();
-  socket.send(encodeClientMessage({
-    ExitGame: {
-      client_request_id: `exit-${Date.now()}`,
-      timestamp_millis: Date.now(),
-      username: usernameInput.value,
-      game_id: joinedGameId.value,
-      player_id: localPlayerId,
-    },
-  }));
+  socket.send(
+    encodeClientMessage({
+      ExitGame: {
+        client_request_id: `exit-${Date.now()}`,
+        timestamp_millis: Date.now(),
+        username: usernameInput.value,
+        game_id: joinedGameId.value,
+        player_id: localPlayerId,
+      },
+    }),
+  );
   socket.close();
 });
 
@@ -460,12 +769,15 @@ async function joinGame(gameId) {
   }
 
   unlockAudio();
-  const characterType = form.querySelector('input[name="character_type"]:checked').value;
+  const characterType = form.querySelector(
+    'input[name="character_type"]:checked',
+  ).value;
   setBusy(true);
   status.textContent = 'Loading sprites…';
-  if (!await assetsReady) {
+  if (!(await assetsReady)) {
     setBusy(false);
-    status.textContent = 'Could not load sprites. Refresh the page and check the client server.';
+    status.textContent =
+      'Could not load sprites. Refresh the page and check the client server.';
     return;
   }
   stopInput();
@@ -483,7 +795,8 @@ async function joinGame(gameId) {
   let failed = false;
   const timeout = setTimeout(() => {
     failed = true;
-    status.textContent = 'Connection timed out. Check that the server is running.';
+    status.textContent =
+      'Connection timed out. Check that the server is running.';
     connection.close();
   }, 10000);
 
@@ -508,15 +821,28 @@ async function joinGame(gameId) {
       message = decodeServerMessage(new Uint8Array(event.data));
     } catch {
       failed = true;
-      status.textContent = 'Could not decode server message. Refresh the client and restart the server.';
+      status.textContent =
+        'Could not decode server message. Refresh the client and restart the server.';
       connection.close();
       return;
     }
     if (message && typeof message === 'object' && message.PlayerKilled) {
       const kill = message.PlayerKilled;
       if (welcomed && !leavingGame && kill.game_id === joinedGameId.value) {
+        playWeaponSound(
+          'PlayerDeath',
+          kill.position,
+          displayedLocalPlayer || currentSnapshot?.players.get(localPlayerId),
+          0.65,
+        );
         const announcement = document.querySelector('#kill-announcement');
-        const weaponName = { Pistol: 'Pistol', Ak47: 'AK-47', DesertEagle: 'Desert Eagle', RocketLauncher: 'Rocket Launcher' }[kill.weapon_type] || kill.weapon_type;
+        const weaponName =
+          {
+            Pistol: 'Pistol',
+            Ak47: 'AK-47',
+            DesertEagle: 'Desert Eagle',
+            RocketLauncher: 'Rocket Launcher',
+          }[kill.weapon_type] || kill.weapon_type;
         announcement.textContent = `${kill.killer_name} killed ${kill.victim_name} with ${weaponName}`;
         clearTimeout(killAnnouncementTimer);
         killAnnouncementTimer = setTimeout(() => {
@@ -531,11 +857,37 @@ async function joinGame(gameId) {
       connection.close();
       return;
     }
+    if (
+      message.PlayerDamaged &&
+      welcomed &&
+      !leavingGame &&
+      message.PlayerDamaged.game_id === joinedGameId.value &&
+      message.PlayerDamaged.player_id === localPlayerId
+    ) {
+      showDamageFlash();
+    }
+    if (
+      message.TrainWhistle &&
+      welcomed &&
+      !leavingGame &&
+      message.TrainWhistle.game_id === joinedGameId.value
+    ) {
+      playWeaponSound(
+        'TrainWhistle',
+        message.TrainWhistle.position,
+        displayedLocalPlayer || currentSnapshot?.players.get(localPlayerId),
+        0.6,
+      );
+    }
     // Welcome confirms a successful join.
     if (message && typeof message === 'object' && message.GunFired) {
       const shot = message.GunFired;
       if (welcomed && !leavingGame && shot.game_id === joinedGameId.value) {
-        playWeaponSound(shot.weapon_type, shot.player_id === localPlayerId ? 0.25 : 0.12);
+        playWeaponSound(
+          shot.weapon_type,
+          shot.position,
+          displayedLocalPlayer || currentSnapshot?.players.get(localPlayerId),
+        );
       }
     }
     if (message && typeof message === 'object' && message.Welcome) {
@@ -553,18 +905,21 @@ async function joinGame(gameId) {
     }
     if (message && typeof message === 'object' && message.StateSnapshot) {
       const snapshot = message.StateSnapshot;
-      if (!welcomed || leavingGame || snapshot.game_id !== joinedGameId.value) return;
+      if (!welcomed || leavingGame || snapshot.game_id !== joinedGameId.value)
+        return;
       storeSnapshot(snapshot);
       const firstSnapshot = board.hidden;
       board.hidden = false;
       if (firstSnapshot) canvas.focus({ preventScroll: true });
-      if (animationFrame === null) animationFrame = requestAnimationFrame(drawFrame);
+      if (animationFrame === null)
+        animationFrame = requestAnimationFrame(drawFrame);
     }
   });
 
   connection.addEventListener('error', () => {
     failed = true;
-    status.textContent = 'Could not connect. Start the Rust server on port 8000.';
+    status.textContent =
+      'Could not connect. Start the Rust server on port 8000.';
   });
 
   connection.addEventListener('close', () => {
@@ -579,7 +934,11 @@ async function joinGame(gameId) {
     resetRendering();
     localPlayerId = null;
     if (!failed) {
-      status.textContent = leavingGame ? 'Left the game.' : welcomed ? 'Disconnected. You can join again.' : 'Connection closed before joining.';
+      status.textContent = leavingGame
+        ? 'Left the game.'
+        : welcomed
+          ? 'Disconnected. You can join again.'
+          : 'Connection closed before joining.';
     }
   });
 }

@@ -39,6 +39,7 @@
  *   left: boolean,
  *   right: boolean,
  *   shooting: boolean,
+ *   sprinting: boolean,
  *   aim_angle: number
  * }} PlayerInputPayload
  */
@@ -63,19 +64,75 @@
  * }} ProcessedResponse
  */
 
+/**
+ * @typedef {Object} RoundState
+ * @property {number} number
+ * @property {boolean} intermission
+ * @property {number} ends_at_millis
+ */
+
+/**
+ * @typedef {Object} InputAck
+ * @property {PlayerId} player_id
+ * @property {string} last_processed_client_request_id
+ */
+
+/**
+ * @typedef {Object} SnapshotPayload
+ * @property {GameId} game_id
+ * @property {number} timestamp_millis
+ * @property {RoundState} round
+ * @property {ObjectState[]} objects
+ * @property {InputAck[]} acknowledgements
+ */
+
+/**
+ * @typedef {Object} PlayerDamagedPayload
+ * @property {GameId} game_id
+ * @property {PlayerId} player_id
+ * @property {number} damage
+ * @property {number} health
+ */
+
+/**
+ * @typedef {Object} PlayerKilledMessage
+ * @property {GameId} game_id
+ * @property {PlayerId} killer_id
+ * @property {PlayerId} victim_id
+ * @property {string} killer_name
+ * @property {string} victim_name
+ * @property {WeaponType} weapon_type
+ * @property {Position} position
+ */
+
+/**
+ * @typedef {ServerResponse & {
+ *   weapon_type: WeaponType,
+ *   position: Position,
+ *   aim_angle: number
+ * }} GunFiredPayload
+ */
+
+/** @typedef {{ PlayerDamaged: PlayerDamagedPayload }} PlayerDamagedMessage */
+/** @typedef {{ TrainWhistle: { game_id: GameId, position: Position } }} TrainWhistleMessage */
 /** @typedef {{ Welcome: ServerResponse }} WelcomeMessage */
-/** @typedef {{ GunFired: ServerResponse & { weapon_type: WeaponType, position: Position, aim_angle: number } }} GunFiredMessage */
-/** @typedef {{ StateSnapshot: { game_id: GameId, timestamp_millis: number, objects: ObjectState[], acknowledgements: { player_id: PlayerId, last_processed_client_request_id: string }[] } }} StateSnapshotMessage */
+/** @typedef {{ GunFired: GunFiredPayload }} GunFiredMessage */
+/** @typedef {{ StateSnapshot: SnapshotPayload }} StateSnapshotMessage */
 /** @typedef {{ PlayerDied: ProcessedResponse & { dead_player_id: PlayerId } }} PlayerDiedMessage */
 /** @typedef {{ PlayerLeft: ProcessedResponse & { abandoned_player_id: PlayerId } }} PlayerLeftMessage */
 
-// The WebSocket transports binary Protobuf envelopes.
+// wire.js transports these application objects as binary Protobuf envelopes.
 /**
- * @typedef {WelcomeMessage | StateSnapshotMessage | PlayerDiedMessage | PlayerLeftMessage | GunFiredMessage | { PlayerKilled: PlayerKilledMessage } | { Error: { code: string } } | { Pong: {} }} ServerMessage
+ * @typedef {PlayerDamagedMessage
+ *   | TrainWhistleMessage
+ *   | WelcomeMessage
+ *   | StateSnapshotMessage
+ *   | PlayerDiedMessage
+ *   | PlayerLeftMessage
+ *   | GunFiredMessage
+ *   | { PlayerKilled: PlayerKilledMessage }
+ *   | { Error: { code: string } }
+ *   | { Pong: {} }} ServerMessage
  */
 
 export {};
-
-/**
- * @typedef {{ game_id: import('./types.js').GameId, killer_id: number, victim_id: number, killer_name: string, victim_name: string, weapon_type: import('./types.js').WeaponType }} PlayerKilledMessage
- */

@@ -109,7 +109,7 @@ impl Metrics {
             ),
             snapshot_duration: histogram(
                 "riot_snapshot_duration_seconds",
-                "Snapshot build and channel delivery duration, including backpressure",
+                "Snapshot build, encoding, and latest-frame watch publication duration",
             ),
             workers: gauge("riot_tokio_workers", "Configured Tokio worker threads"),
             registry,

@@ -73,17 +73,66 @@ pub fn can_stand(position: Position, radius: f32) -> bool {
     true
 }
 
-pub fn segment_blocked(start: Position, end: Position, radius: f32) -> bool {
-    let distance = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
-    let steps = (distance / radius.max(1.0)).ceil().max(1.0) as usize;
-    (0..=steps).any(|step| {
-        let fraction = step as f32 / steps as f32;
-        !can_stand(
-            Position {
-                x: start.x + (end.x - start.x) * fraction,
-                y: start.y + (end.y - start.y) * fraction,
-            },
-            radius,
-        )
-    })
+// Sweep a circle against nearby wall tiles. The two face rectangles plus
+// corner circles form the exact rounded rectangle, avoiding corner false hits.
+pub fn segment_hit_fraction(start: Position, end: Position, radius: f32) -> Option<f32> {
+    use crate::collision::{box_time, circle_time};
+    let mut first: Option<f32> = None;
+    let min_x = ((start.x.min(end.x) - radius) / TILE_SIZE).floor() as i32;
+    let max_x = ((start.x.max(end.x) + radius) / TILE_SIZE).floor() as i32;
+    let min_y = ((start.y.min(end.y) - radius) / TILE_SIZE).floor() as i32;
+    let max_y = ((start.y.max(end.y) + radius) / TILE_SIZE).floor() as i32;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let left = x as f32 * TILE_SIZE;
+            let top = y as f32 * TILE_SIZE;
+            if tile(left, top) != b'#' {
+                continue;
+            }
+            let right = left + TILE_SIZE;
+            let bottom = top + TILE_SIZE;
+            let contacts = [
+                box_time(
+                    start,
+                    end,
+                    Position {
+                        x: left - radius,
+                        y: top,
+                    },
+                    Position {
+                        x: right + radius,
+                        y: bottom,
+                    },
+                ),
+                box_time(
+                    start,
+                    end,
+                    Position {
+                        x: left,
+                        y: top - radius,
+                    },
+                    Position {
+                        x: right,
+                        y: bottom + radius,
+                    },
+                ),
+                circle_time(start, end, Position { x: left, y: top }, radius),
+                circle_time(start, end, Position { x: right, y: top }, radius),
+                circle_time(start, end, Position { x: left, y: bottom }, radius),
+                circle_time(
+                    start,
+                    end,
+                    Position {
+                        x: right,
+                        y: bottom,
+                    },
+                    radius,
+                ),
+            ];
+            for t in contacts.into_iter().flatten() {
+                first = Some(first.map_or(t, |old| old.min(t)));
+            }
+        }
+    }
+    first
 }

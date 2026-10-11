@@ -10,6 +10,12 @@ pub enum CharacterType {
     Blue,
     Brown,
     Green,
+    Black,
+    Gray,
+    Olive,
+    Cyan,
+    Survivor,
+    Zombie,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -44,6 +50,8 @@ pub enum Object {
     },
     Weapon {
         weapon_type: WeaponType,
+        expires_at_millis: u64,
+        lifetime_millis: u64,
     },
     Player {
         player_id: PlayerId,

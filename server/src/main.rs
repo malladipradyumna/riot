@@ -9,11 +9,12 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 use uuid::Uuid;
 
-use crate::game::{GameManager, GameMessage};
+use crate::game::{GameHandle, GameManager, GameMessage};
 
 const ADDRESS: &str = "0.0.0.0:8000";
 
 mod codec;
+mod collision;
 mod components;
 mod constants;
 mod game;
@@ -98,7 +99,8 @@ async fn handle_client(
     let _connection_metric = metrics::get().connection();
     tracing::debug!("WebSocket handshake completed");
     let (sender_to_client, mut receiver_from_server) = mpsc::channel::<ServerMessage>(64);
-    let mut sender_to_game: Option<mpsc::Sender<GameMessage>> = None;
+    let mut sender_to_game: Option<GameHandle> = None;
+    let mut welcomed = false;
 
     loop {
         tokio::select! {
@@ -136,12 +138,19 @@ async fn handle_client(
                     _ => {}
                 }
             }
+            result = async { sender_to_game.as_mut().unwrap().snapshots.changed().await }, if welcomed && sender_to_game.is_some() => {
+                if result.is_err() { break; }
+                // Drop the watch borrow before awaiting WebSocket I/O.
+                let bytes = sender_to_game.as_mut().unwrap().snapshots.borrow_and_update().clone();
+                if let Some(bytes) = bytes {
+                    send_application(&mut websocket, bytes).await?;
+                    metrics::get().snapshot_deliveries.inc();
+                }
+            }
             Some(message) = receiver_from_server.recv() => {
                 let bytes = codec::encode_server(&message);
                 send_application(&mut websocket, bytes).await?;
-                if matches!(message, ServerMessage::StateSnapshot { .. }) {
-                    metrics::get().snapshot_deliveries.inc();
-                }
+                if matches!(message, ServerMessage::Welcome { .. }) { welcomed = true; }
             }
         }
     }
@@ -162,7 +171,7 @@ async fn send_application(
 async fn handle_client_msg(
     client_message: ClientMessage,
     game_manager: &Arc<Mutex<GameManager>>,
-    sender_to_game: &mut Option<mpsc::Sender<GameMessage>>,
+    sender_to_game: &mut Option<GameHandle>,
     sender_to_client: &mpsc::Sender<ServerMessage>,
 ) -> Result<(), String> {
     if let ClientMessage::JoinGame { game_id, .. } = &client_message {
@@ -182,6 +191,7 @@ async fn handle_client_msg(
 
     let sender = sender_to_game.as_ref().ok_or("JOIN_GAME_FIRST")?;
     sender
+        .sender
         .send(GameMessage {
             client_message,
             sender_to_client: sender_to_client.clone(),

@@ -1,4 +1,4 @@
-use crate::types::{CharacterType, GameId, ObjectState, PlayerId, Position, WeaponType};
+use crate::types::{CharacterType, GameId, PlayerId, Position, WeaponType};
 
 use serde::{Deserialize, Serialize};
 
@@ -29,12 +29,24 @@ pub enum ClientMessage {
         left: bool,
         right: bool,
         shooting: bool,
+        #[serde(default)]
+        sprinting: bool,
         aim_angle: f32,
     },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ServerMessage {
+    PlayerDamaged {
+        game_id: GameId,
+        player_id: PlayerId,
+        damage: f32,
+        health: f32,
+    },
+    TrainWhistle {
+        game_id: GameId,
+        position: Position,
+    },
     PlayerKilled {
         game_id: GameId,
         killer_id: PlayerId,
@@ -42,6 +54,7 @@ pub enum ServerMessage {
         killer_name: String,
         victim_name: String,
         weapon_type: WeaponType,
+        position: Position,
     },
     GunFired {
         server_request_id: String,
@@ -57,16 +70,6 @@ pub enum ServerMessage {
         timestamp_millis: u64,
         player_id: PlayerId,
         game_id: GameId,
-    },
-    StateSnapshot {
-        server_request_id: String,
-        timestamp_millis: u64,
-        player_id: PlayerId,
-        game_id: GameId,
-        last_processed_client_request_id: String,
-        objects: std::sync::Arc<Vec<ObjectState>>,
-        #[serde(skip)]
-        encoded: bytes::Bytes,
     },
     PlayerDied {
         server_request_id: String,

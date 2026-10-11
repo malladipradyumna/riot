@@ -28,6 +28,7 @@ pub struct MovementInput {
     pub down: bool,
     pub left: bool,
     pub right: bool,
+    pub sprinting: bool,
 }
 
 // Bullets use Position, Velocity, and Lifetime.
@@ -48,3 +49,22 @@ pub struct Bullet {
 pub struct RespawnCount(pub u32);
 
 pub struct Ammo(pub f32);
+
+pub struct PreviousPosition(pub crate::types::Position);
+
+pub struct WeaponPickup {
+    pub weapon_type: WeaponType,
+    pub expires_at: tokio::time::Instant,
+    pub expires_at_millis: u64,
+}
+
+impl MovementInput {
+    pub fn speed(&self, position: crate::types::Position) -> f32 {
+        crate::terrain::speed(position)
+            * if self.sprinting {
+                crate::constants::SPRINT_SPEED_MULTIPLIER
+            } else {
+                1.0
+            }
+    }
+}

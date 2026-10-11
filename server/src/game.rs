@@ -6,13 +6,16 @@ use std::{
 
 use crate::{
     constants::{
-        BULLET_LIFETIME, BULLET_RADIUS, BULLET_SPEED, FIRE_INTERVAL, MAP_HEIGHT, MAP_WIDTH,
-        MAX_HEALTH, SNAPSHOT_RATE, TICK_DURATION,
+        BULLET_LIFETIME, BULLET_RADIUS, BULLET_SPEED_MULTIPLIER, FIRE_INTERVAL, MAP_HEIGHT,
+        MAP_WIDTH, MAX_HEALTH, SNAPSHOT_RATE, TICK_DURATION,
     },
     protocol::{ClientMessage, ServerMessage},
     types::{CharacterType, EntityId, GameId, Object, ObjectState, PlayerId, Position, WeaponType},
 };
-use tokio::{sync::mpsc, time};
+use tokio::{
+    sync::{mpsc, watch},
+    time,
+};
 use uuid::Uuid;
 
 use crate::components::{
@@ -21,7 +24,7 @@ use crate::components::{
 };
 
 pub struct GameManager {
-    game_senders: HashMap<GameId, mpsc::Sender<GameMessage>>,
+    game_senders: HashMap<GameId, GameHandle>,
 }
 
 impl GameManager {
@@ -31,26 +34,30 @@ impl GameManager {
         }
     }
 
-    pub fn new_game(
-        &mut self,
-        game_id: GameId,
-        manager: Arc<Mutex<GameManager>>,
-    ) -> mpsc::Sender<GameMessage> {
+    pub fn new_game(&mut self, game_id: GameId, manager: Arc<Mutex<GameManager>>) -> GameHandle {
         let (sender, receiver) = mpsc::channel(64);
+        let (snapshot_sender, snapshots) = watch::channel(None);
         let game = Game {
             id: game_id.clone(),
             receiver,
+            snapshot_sender,
+            last_snapshot_timestamp: 0,
             world: hecs::World::new(),
             players: HashMap::new(),
             next_player_id: 1,
             next_entity_id: 1,
+            round_number: 1,
+            intermission: false,
+            round_deadline: time::Instant::now()
+                + Duration::from_secs(crate::constants::ROUND_SECONDS),
         };
-        self.game_senders.insert(game_id, sender.clone());
+        let handle = GameHandle { sender, snapshots };
+        self.game_senders.insert(game_id, handle.clone());
         tokio::spawn(game.run(manager));
-        sender
+        handle
     }
 
-    pub fn get_sender_for_gameid(&self, game_id: &str) -> Option<mpsc::Sender<GameMessage>> {
+    pub fn get_sender_for_gameid(&self, game_id: &str) -> Option<GameHandle> {
         self.game_senders.get(game_id).cloned()
     }
 
@@ -62,10 +69,15 @@ impl GameManager {
 struct Game {
     id: GameId,
     receiver: mpsc::Receiver<GameMessage>,
+    snapshot_sender: watch::Sender<Option<bytes::Bytes>>,
+    last_snapshot_timestamp: u64,
     world: hecs::World,
     players: HashMap<PlayerId, Player>,
     next_player_id: PlayerId,
     next_entity_id: EntityId,
+    round_number: u32,
+    intermission: bool,
+    round_deadline: time::Instant,
 }
 
 impl Game {
@@ -73,6 +85,9 @@ impl Game {
         let mut game_metrics = crate::metrics::get().game();
         crate::train::spawn(&mut self.world, self.next_entity_id);
         self.next_entity_id += crate::constants::TRAIN_CARRIAGES;
+        for _ in 0..crate::constants::INITIAL_WEAPON_PICKUPS {
+            self.spawn_weapon_pickup();
+        }
         tracing::info!("Created game {}", self.id);
         let mut empty_since = Some(time::Instant::now());
         let mut timer = time::interval_at(
@@ -83,8 +98,20 @@ impl Game {
         simulation.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
         let mut snapshots = time::interval(Duration::from_secs_f64(1.0 / SNAPSHOT_RATE as f64));
         snapshots.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+        let mut pickups = time::interval(Duration::from_secs_f64(
+            crate::constants::WEAPON_SPAWN_SECONDS,
+        ));
+        pickups.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
         loop {
+            if time::Instant::now() >= self.round_deadline {
+                self.advance_round();
+                if !self.intermission {
+                    simulation.reset();
+                    pickups.reset();
+                }
+            }
             tokio::select! {
+                _ = time::sleep_until(self.round_deadline) => {},
                 message = self.receiver.recv() => {
                     let Some(message) = message else { break };
                     self.handle_message(message).await;
@@ -92,17 +119,24 @@ impl Game {
                         empty_since = None;
                     }
                 }
-                scheduled = simulation.tick() => {
+                scheduled = simulation.tick(), if !self.intermission => {
                     crate::metrics::get().simulation_delay.observe(scheduled.elapsed().as_secs_f64());
                     let started = std::time::Instant::now();
-                    crate::train::tick(&mut self.world);
+                    for (_, position, previous) in self.world.query_mut::<(&PlayerId, &Position, &mut crate::components::PreviousPosition)>() { previous.0 = *position; }
+                    if let Some(position) = crate::train::tick(&mut self.world) {
+                        for player in self.players.values() {
+                            let _ = player.sender_for_client.try_send(ServerMessage::TrainWhistle { game_id: self.id.clone(), position });
+                        }
+                    }
                     self.move_players();
+                    self.update_weapon_pickups();
                     crate::train::replenish(&mut self.world);
                     self.fire_bullets();
                     self.move_bullets();
                     crate::metrics::get().simulation_duration.observe(started.elapsed().as_secs_f64());
                 },
-                _ = snapshots.tick() => self.send_player_snapshots().await,
+                _ = snapshots.tick() => self.send_player_snapshots(),
+                _ = pickups.tick(), if !self.intermission => self.spawn_weapon_pickup(),
                 _ = timer.tick() => {
                     // Remove disconnected participants and their gameplay entities.
                     self.players.retain(|_, player| {
@@ -155,7 +189,7 @@ impl Game {
             let player = self.players.remove(player_id).unwrap();
             let _ = self.world.despawn(player.entity);
             tracing::info!("Player {player_id} left game {}", self.id);
-            self.send_player_snapshots().await;
+            self.send_player_snapshots();
             return;
         }
         if let ClientMessage::PlayerInput {
@@ -168,10 +202,11 @@ impl Game {
             right,
             aim_angle,
             shooting,
+            sprinting,
             ..
         } = &message.client_message
         {
-            if game_id != &self.id || !aim_angle.is_finite() {
+            if self.intermission || game_id != &self.id || !aim_angle.is_finite() {
                 return;
             }
             let Some(player) = self.players.get_mut(player_id) else {
@@ -195,6 +230,7 @@ impl Game {
                     down: *down,
                     left: *left,
                     right: *right,
+                    sprinting: *sprinting,
                 };
                 aim.0 = *aim_angle;
                 fire.pending_shot |= *shooting && !fire.held;
@@ -216,12 +252,13 @@ impl Game {
             let position = random_spawn_position();
             let object_id = self.next_entity_id;
             self.next_entity_id += 1;
-            let weapon = random_weapon();
+            let weapon = WeaponType::Pistol;
             let entity = self.world.spawn((
                 player_id,
                 username.clone(),
                 character_type,
                 position,
+                crate::components::PreviousPosition(position),
                 Health(MAX_HEALTH),
                 Score::default(),
                 weapon,
@@ -260,13 +297,72 @@ impl Game {
                 let _ = self.world.despawn(entity);
                 return;
             }
-            self.send_player_snapshots().await;
+            self.send_player_snapshots();
         }
     }
 
-    async fn send_player_snapshots(&mut self) {
+    fn advance_round(&mut self) {
+        self.intermission = !self.intermission;
+        self.round_deadline = time::Instant::now()
+            + Duration::from_secs(if self.intermission {
+                crate::constants::ROUND_BREAK_SECONDS
+            } else {
+                crate::constants::ROUND_SECONDS
+            });
+        for (input, shooting) in self
+            .world
+            .query_mut::<(&mut MovementInput, &mut Shooting)>()
+        {
+            *input = MovementInput::default();
+            *shooting = Shooting::default();
+        }
+        if !self.intermission {
+            self.round_number = self.round_number.saturating_add(1);
+            let transient: Vec<_> = self
+                .world
+                .query::<(
+                    hecs::Entity,
+                    Option<&Bullet>,
+                    Option<&crate::components::WeaponPickup>,
+                )>()
+                .iter()
+                .filter_map(|(entity, bullet, pickup)| {
+                    (bullet.is_some() || pickup.is_some()).then_some(entity)
+                })
+                .collect();
+            for entity in transient {
+                let _ = self.world.despawn(entity);
+            }
+            for (position, previous, health, score, weapon, ammo, respawn) in
+                self.world.query_mut::<(
+                    &mut Position,
+                    &mut crate::components::PreviousPosition,
+                    &mut Health,
+                    &mut Score,
+                    &WeaponType,
+                    &mut crate::components::Ammo,
+                    Option<&mut crate::components::RespawnCount>,
+                )>()
+            {
+                *position = random_spawn_position();
+                previous.0 = *position;
+                health.0 = MAX_HEALTH;
+                *score = Score::default();
+                ammo.0 = crate::constants::ammo_capacity(*weapon) as f32;
+                if let Some(respawn) = respawn {
+                    respawn.0 = respawn.0.wrapping_add(1);
+                }
+            }
+            for _ in 0..crate::constants::INITIAL_WEAPON_PICKUPS {
+                self.spawn_weapon_pickup();
+            }
+        }
+        self.send_player_snapshots();
+    }
+
+    fn send_player_snapshots(&mut self) {
         let snapshot_timer = crate::metrics::get().snapshot_duration.start_timer();
-        // Copy component data into owned objects before awaiting any sends.
+        // Build one owned snapshot; the watch channel retains only the latest encoded frame.
         let platforms = crate::train::platforms(&self.world);
         let mut objects = Vec::with_capacity(self.players.len());
         for (player_id, player) in &self.players {
@@ -281,17 +377,27 @@ impl Game {
                 .world
                 .get::<&crate::components::Ammo>(player.entity)
                 .map_or(0, |ammo| ammo.0.floor() as u32);
-            if let Ok((username, character, position, health, score, aim, weapon, object_id)) =
-                self.world.query_one_mut::<(
-                    &String,
-                    &CharacterType,
-                    &Position,
-                    &Health,
-                    &Score,
-                    &AimAngle,
-                    &WeaponType,
-                    &ObjectId,
-                )>(player.entity)
+            if let Ok((
+                username,
+                character,
+                position,
+                health,
+                score,
+                aim,
+                weapon,
+                object_id,
+                input,
+            )) = self.world.query_one_mut::<(
+                &String,
+                &CharacterType,
+                &Position,
+                &Health,
+                &Score,
+                &AimAngle,
+                &WeaponType,
+                &ObjectId,
+                &MovementInput,
+            )>(player.entity)
             {
                 objects.push(ObjectState {
                     entity_id: object_id.0,
@@ -303,7 +409,7 @@ impl Game {
                         health: health.0,
                         ammo,
                         ammo_capacity: crate::constants::ammo_capacity(*weapon),
-                        speed: crate::terrain::speed(*position),
+                        speed: input.speed(*position),
                         respawn_count,
                         kills: score.kills,
                         deaths: score.deaths,
@@ -346,11 +452,29 @@ impl Game {
                 },
             });
         }
+        for (id, position, pickup) in
+            self.world
+                .query_mut::<(&ObjectId, &Position, &crate::components::WeaponPickup)>()
+        {
+            if pickup.expires_at > time::Instant::now() {
+                objects.push(ObjectState {
+                    entity_id: id.0,
+                    position: *position,
+                    object: Object::Weapon {
+                        weapon_type: pickup.weapon_type,
+                        expires_at_millis: pickup.expires_at_millis,
+                        lifetime_millis: crate::constants::WEAPON_LIFETIME_SECONDS * 1000,
+                    },
+                });
+            }
+        }
         objects.sort_by_key(|object| object.entity_id);
         let timestamp_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
+        let timestamp_millis = timestamp_millis.max(self.last_snapshot_timestamp + 1);
+        self.last_snapshot_timestamp = timestamp_millis;
         let acknowledgements = self
             .players
             .iter()
@@ -359,22 +483,24 @@ impl Game {
                 last_processed_client_request_id: player.last_processed_request_id.clone(),
             })
             .collect();
-        let encoded =
-            crate::codec::encode_snapshot(&self.id, timestamp_millis, &objects, acknowledgements);
-        let objects = Arc::new(objects);
+        let round = crate::wire::RoundState {
+            number: self.round_number,
+            intermission: self.intermission,
+            ends_at_millis: timestamp_millis
+                + self
+                    .round_deadline
+                    .saturating_duration_since(time::Instant::now())
+                    .as_millis() as u64,
+        };
+        let encoded = crate::codec::encode_snapshot(
+            &self.id,
+            timestamp_millis,
+            &objects,
+            acknowledgements,
+            round,
+        );
         crate::metrics::get().snapshots.inc();
-        for (player_id, player) in &self.players {
-            let snapshot = ServerMessage::StateSnapshot {
-                server_request_id: Uuid::new_v4().to_string(),
-                timestamp_millis,
-                player_id: *player_id,
-                game_id: self.id.clone(),
-                last_processed_client_request_id: player.last_processed_request_id.clone(),
-                objects: Arc::clone(&objects),
-                encoded: encoded.clone(),
-            };
-            let _ = player.sender_for_client.send(snapshot).await;
-        }
+        self.snapshot_sender.send_replace(Some(encoded));
         snapshot_timer.observe_duration();
     }
 
@@ -389,7 +515,7 @@ impl Game {
                 continue;
             }
             let length = ((x * x + y * y) as f32).sqrt();
-            let distance = crate::terrain::speed(*position) * TICK_DURATION;
+            let distance = input.speed(*position) * TICK_DURATION;
             let previous = *position;
             let next_x = (position.x + x as f32 / length * distance)
                 .clamp(PLAYER_RADIUS, MAP_WIDTH - PLAYER_RADIUS);
@@ -426,14 +552,18 @@ impl Game {
 
     fn fire_bullets(&mut self) {
         let mut shots = Vec::new();
-        for (owner, position, aim, weapon, shooting, ammo) in self.world.query_mut::<(
-            &PlayerId,
-            &Position,
-            &AimAngle,
-            &WeaponType,
-            &mut Shooting,
-            &mut crate::components::Ammo,
-        )>() {
+        for (owner, position, previous, aim, weapon, shooting, ammo, input) in
+            self.world.query_mut::<(
+                &PlayerId,
+                &Position,
+                &crate::components::PreviousPosition,
+                &AimAngle,
+                &WeaponType,
+                &mut Shooting,
+                &mut crate::components::Ammo,
+                &MovementInput,
+            )>()
+        {
             shooting.cooldown = (shooting.cooldown - TICK_DURATION).max(0.0);
             if (!shooting.held && !shooting.pending_shot) || shooting.cooldown > f32::EPSILON {
                 continue;
@@ -452,22 +582,33 @@ impl Game {
             shooting.cooldown = FIRE_INTERVAL;
             shooting.pending_shot = false;
             let offset = PLAYER_RADIUS + BULLET_RADIUS + 1.0;
+            let muzzle = Position {
+                x: position.x + aim.0.cos() * offset,
+                y: position.y + aim.0.sin() * offset,
+            };
+            // Do not spawn a projectile past a wall between the body and muzzle.
+            let muzzle = crate::terrain::segment_hit_fraction(*position, muzzle, BULLET_RADIUS)
+                .map_or(muzzle, |t| Position {
+                    x: position.x + (muzzle.x - position.x) * t,
+                    y: position.y + (muzzle.y - position.y) * t,
+                });
+            let bullet_speed = input.speed(*position) * BULLET_SPEED_MULTIPLIER;
             shots.push((
                 *owner,
                 *weapon,
                 aim.0,
-                Position {
-                    x: position.x + aim.0.cos() * offset,
-                    y: position.y + aim.0.sin() * offset,
-                },
+                muzzle,
                 Velocity {
-                    x: aim.0.cos() * BULLET_SPEED,
-                    y: aim.0.sin() * BULLET_SPEED,
+                    // Actual tick displacement includes train transport and walking,
+                    // and excludes movement blocked by walls.
+                    x: aim.0.cos() * bullet_speed + (position.x - previous.0.x) / TICK_DURATION,
+                    y: aim.0.sin() * bullet_speed + (position.y - previous.0.y) / TICK_DURATION,
                 },
             ));
         }
         // Finish borrowing player components before spawning new entities.
         for (owner, weapon_type, aim_angle, position, velocity) in shots {
+            let bullet_angle = velocity.y.atan2(velocity.x);
             let object_id = self.next_entity_id;
             self.next_entity_id += 1;
             self.world.spawn((
@@ -477,7 +618,7 @@ impl Game {
                 Bullet {
                     owner,
                     weapon_type,
-                    aim_angle,
+                    aim_angle: bullet_angle,
                 },
                 Collider(BULLET_RADIUS),
                 Lifetime(BULLET_LIFETIME),
@@ -501,7 +642,7 @@ impl Game {
     }
 
     fn move_bullets(&mut self) {
-        // Copy colliders before borrowing bullet positions mutably.
+        // Own the collision inputs before mutating positions or despawning entities.
         let colliders: Vec<_> = self
             .world
             .query_mut::<(
@@ -510,18 +651,37 @@ impl Game {
                 &Collider,
                 Option<&PlayerId>,
                 Option<&Velocity>,
+                Option<&crate::components::PreviousPosition>,
+                Option<&crate::train::Train>,
             )>()
             .into_iter()
-            .map(|(entity, position, radius, player_id, velocity)| {
-                let delta = velocity.map_or(Position { x: 0.0, y: 0.0 }, |v| Position {
-                    x: v.x * TICK_DURATION,
-                    y: v.y * TICK_DURATION,
-                });
-                (entity, *position, radius.0, player_id.copied(), delta)
+            .filter(|(_, _, _, player, _, _, train)| {
+                train.is_none()
+                    && player.is_none_or(|id| {
+                        self.players
+                            .get(id)
+                            .is_some_and(|p| !p.sender_for_client.is_closed())
+                    })
             })
+            .map(
+                |(entity, position, radius, player, velocity, previous, _)| {
+                    let start = previous.map_or(*position, |p| p.0);
+                    let delta = if let Some(v) = velocity {
+                        Position {
+                            x: v.x * TICK_DURATION,
+                            y: v.y * TICK_DURATION,
+                        }
+                    } else {
+                        Position {
+                            x: position.x - start.x,
+                            y: position.y - start.y,
+                        }
+                    };
+                    (entity, start, radius.0, player.copied(), delta, *position)
+                },
+            )
             .collect();
-        let mut removals = Vec::new();
-        let mut hits = Vec::new();
+        let mut contacts = Vec::new();
         for (entity, position, velocity, bullet, lifetime) in self.world.query_mut::<(
             hecs::Entity,
             &mut Position,
@@ -529,60 +689,80 @@ impl Game {
             &Bullet,
             &mut Lifetime,
         )>() {
-            let previous = *position;
-            position.x += velocity.x * TICK_DURATION;
-            position.y += velocity.y * TICK_DURATION;
+            let start = *position;
+            let end = Position {
+                x: start.x + velocity.x * TICK_DURATION,
+                y: start.y + velocity.y * TICK_DURATION,
+            };
+            *position = end;
+            if let Some(t) = crate::terrain::segment_hit_fraction(start, end, BULLET_RADIUS) {
+                contacts.push((t, entity, None, None));
+            }
+            if lifetime.0 <= TICK_DURATION {
+                contacts.push((
+                    (lifetime.0 / TICK_DURATION).clamp(0.0, 1.0),
+                    entity,
+                    None,
+                    None,
+                ));
+            }
             lifetime.0 -= TICK_DURATION;
-            let wall_hit = crate::terrain::segment_blocked(previous, *position, BULLET_RADIUS)
-                || position.x <= BULLET_RADIUS
-                || position.x >= MAP_WIDTH - BULLET_RADIUS
-                || position.y <= BULLET_RADIUS
-                || position.y >= MAP_HEIGHT - BULLET_RADIUS
-                || previous.x <= BULLET_RADIUS
-                || previous.x >= MAP_WIDTH - BULLET_RADIUS
-                || previous.y <= BULLET_RADIUS
-                || previous.y >= MAP_HEIGHT - BULLET_RADIUS;
-            let hit = colliders
-                .iter()
-                .filter(|(other, center, radius, player_id, delta)| {
-                    if *other == entity || *player_id == Some(bullet.owner) {
-                        return false;
-                    }
-                    // Relative segment also accounts for two bullets moving toward each other.
-                    segment_hits_circle(
-                        Position {
-                            x: previous.x - center.x,
-                            y: previous.y - center.y,
-                        },
-                        Position {
-                            x: position.x - center.x - delta.x,
-                            y: position.y - center.y - delta.y,
-                        },
-                        BULLET_RADIUS + radius,
-                    )
-                })
-                .min_by(|a, b| {
-                    let distance = |center: Position| {
-                        (previous.x - center.x).powi(2) + (previous.y - center.y).powi(2)
-                    };
-                    distance(a.1).total_cmp(&distance(b.1))
-                });
-            if !wall_hit && lifetime.0 > 0.0 {
-                if let Some((_, center, _, Some(victim), _)) = hit {
-                    hits.push((bullet.owner, *victim, bullet.weapon_type, *center));
+            for (other, center, radius, player, delta, current) in &colliders {
+                if *other == entity || *player == Some(bullet.owner) {
+                    continue;
+                }
+                // Process each bullet pair once; both bullets disappear at contact.
+                if player.is_none() && entity.to_bits().get() > other.to_bits().get() {
+                    continue;
+                }
+                let relative_start = Position {
+                    x: start.x - center.x,
+                    y: start.y - center.y,
+                };
+                let relative_end = Position {
+                    x: end.x - center.x - delta.x,
+                    y: end.y - center.y - delta.y,
+                };
+                if let Some(t) = crate::collision::circle_time(
+                    relative_start,
+                    relative_end,
+                    Position { x: 0.0, y: 0.0 },
+                    BULLET_RADIUS + radius,
+                ) {
+                    let damage =
+                        player.map(|victim| (bullet.owner, victim, bullet.weapon_type, *current));
+                    contacts.push((t, entity, Some((*other, player.is_none())), damage));
                 }
             }
-            if wall_hit || hit.is_some() || lifetime.0 <= 0.0 {
-                removals.push(entity);
+        }
+        // Resolve globally in time order. A destroyed bullet cannot block another later hit.
+        contacts.sort_by(|a, b| {
+            a.0.total_cmp(&b.0)
+                .then_with(|| a.2.is_some().cmp(&b.2.is_some()))
+                .then_with(|| a.1.to_bits().cmp(&b.1.to_bits()))
+                .then_with(|| a.2.map(|v| v.0.to_bits()).cmp(&b.2.map(|v| v.0.to_bits())))
+        });
+        let mut removed = std::collections::HashSet::new();
+        let mut hits = Vec::new();
+        for (_, entity, target, damage) in contacts {
+            if removed.contains(&entity)
+                || target.is_some_and(|(other, is_bullet)| is_bullet && removed.contains(&other))
+            {
+                continue;
+            }
+            removed.insert(entity);
+            if let Some((other, true)) = target {
+                removed.insert(other);
+            }
+            if let Some(hit) = damage {
+                hits.push(hit);
             }
         }
-        for entity in removals {
+        for entity in removed {
             let _ = self.world.despawn(entity);
         }
-        // Apply damage after the bullet query releases its world borrow.
         for (killer, victim, weapon, hit_position) in hits {
-            // Hits were collected before damage was applied. A respawn invalidates
-            // other hits against the victim's previous position in this tick.
+            // A respawn invalidates any remaining contacts with the old body this tick.
             let still_at_hit = self
                 .players
                 .get(&victim)
@@ -605,8 +785,10 @@ impl Game {
             return;
         };
         let entity = player.entity;
+        let mut remaining_health = MAX_HEALTH;
         let died = if let Ok(mut health) = self.world.get::<&mut Health>(player.entity) {
             health.0 -= damage;
+            remaining_health = health.0.max(0.0);
             if health.0 <= 0.0 {
                 health.0 = MAX_HEALTH;
                 true
@@ -616,6 +798,14 @@ impl Game {
         } else {
             false
         };
+        let _ = player
+            .sender_for_client
+            .try_send(ServerMessage::PlayerDamaged {
+                game_id: self.id.clone(),
+                player_id: victim,
+                damage,
+                health: remaining_health,
+            });
         if !died {
             return;
         }
@@ -637,6 +827,10 @@ impl Game {
             }
         };
         *self.world.get::<&mut Position>(entity).unwrap() = next;
+        self.world
+            .get::<&mut crate::components::PreviousPosition>(entity)
+            .unwrap()
+            .0 = next;
         let count = self
             .world
             .get::<&crate::components::RespawnCount>(entity)
@@ -679,32 +873,27 @@ impl Game {
                     killer_name: killer_name.clone(),
                     victim_name: victim_name.clone(),
                     weapon_type: weapon,
+                    position: previous,
                 });
         }
     }
 }
 
-fn segment_hits_circle(start: Position, end: Position, radius: f32) -> bool {
-    let dx = end.x - start.x;
-    let dy = end.y - start.y;
-    let length_squared = dx * dx + dy * dy;
-    let fraction = if length_squared > 0.0 {
-        (-(start.x * dx + start.y * dy) / length_squared).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let x = start.x + dx * fraction;
-    let y = start.y + dy * fraction;
-    x * x + y * y <= radius * radius
-}
-
 fn random_weapon() -> WeaponType {
-    [
-        WeaponType::Pistol,
-        WeaponType::Ak47,
-        WeaponType::RocketLauncher,
-        WeaponType::DesertEagle,
-    ][(Uuid::new_v4().as_u128() % 4) as usize]
+    // The last UUID byte is random (outside its fixed version/variant bits).
+    // Rejection avoids modulo bias when reducing 256 possible values to 100.
+    loop {
+        let roll = Uuid::new_v4().as_bytes()[15];
+        if roll >= 200 {
+            continue;
+        }
+        return match roll % 100 {
+            0..=39 => WeaponType::Pistol,
+            40..=69 => WeaponType::Ak47,
+            70..=89 => WeaponType::DesertEagle,
+            _ => WeaponType::RocketLauncher,
+        };
+    }
 }
 
 fn random_spawn_position() -> Position {
@@ -731,4 +920,124 @@ struct Player {
 pub struct GameMessage {
     pub client_message: ClientMessage,
     pub sender_to_client: mpsc::Sender<ServerMessage>,
+}
+
+#[derive(Clone)]
+pub struct GameHandle {
+    pub sender: mpsc::Sender<GameMessage>,
+    pub snapshots: watch::Receiver<Option<bytes::Bytes>>,
+}
+
+impl Game {
+    fn spawn_weapon_pickup(&mut self) {
+        if self
+            .world
+            .query::<&crate::components::WeaponPickup>()
+            .iter()
+            .count()
+            >= crate::constants::MAX_WEAPON_PICKUPS
+        {
+            return;
+        }
+        for _ in 0..100 {
+            let position = random_spawn_position();
+            if !crate::terrain::can_stand(position, crate::constants::WEAPON_PICKUP_RADIUS) {
+                continue;
+            }
+            // Uniform candidate positions, accepted inversely to walking speed.
+            // Water (70) gets all candidates; normal ground (200) gets 35%.
+            let sample = u32::from_le_bytes(Uuid::new_v4().as_bytes()[..4].try_into().unwrap());
+            if sample as f64 / u32::MAX as f64 > 70.0 / crate::terrain::speed(position) as f64 {
+                continue;
+            }
+            let occupied = self
+                .world
+                .query::<(
+                    &Position,
+                    Option<&PlayerId>,
+                    Option<&crate::components::WeaponPickup>,
+                )>()
+                .iter()
+                .any(|(other, player, pickup)| {
+                    (player.is_some() || pickup.is_some())
+                        && (other.x - position.x).powi(2) + (other.y - position.y).powi(2)
+                            < 100.0_f32.powi(2)
+                });
+            if occupied {
+                continue;
+            }
+            let object_id = self.next_entity_id;
+            self.next_entity_id += 1;
+            self.world.spawn((
+                ObjectId(object_id),
+                position,
+                crate::components::WeaponPickup {
+                    weapon_type: random_weapon(),
+                    expires_at: time::Instant::now()
+                        + Duration::from_secs(crate::constants::WEAPON_LIFETIME_SECONDS),
+                    expires_at_millis: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64
+                        + crate::constants::WEAPON_LIFETIME_SECONDS * 1000,
+                },
+            ));
+            break;
+        }
+    }
+
+    fn update_weapon_pickups(&mut self) {
+        let now = time::Instant::now();
+        let pickups: Vec<_> = self
+            .world
+            .query_mut::<(hecs::Entity, &Position, &crate::components::WeaponPickup)>()
+            .into_iter()
+            .map(|(entity, position, pickup)| {
+                (entity, *position, pickup.weapon_type, pickup.expires_at)
+            })
+            .collect();
+        for (pickup, position, weapon, expires_at) in pickups {
+            if expires_at <= now {
+                let _ = self.world.despawn(pickup);
+                continue;
+            }
+            let winner = self
+                .world
+                .query::<(
+                    hecs::Entity,
+                    &PlayerId,
+                    &Position,
+                    &crate::components::PreviousPosition,
+                )>()
+                .iter()
+                .filter(|(_, id, current, previous)| {
+                    self.players
+                        .get(id)
+                        .is_some_and(|p| !p.sender_for_client.is_closed())
+                        && crate::collision::circle_time(
+                            previous.0,
+                            **current,
+                            position,
+                            PLAYER_RADIUS + crate::constants::WEAPON_PICKUP_RADIUS,
+                        )
+                        .is_some()
+                })
+                .min_by_key(|(_, id, _, _)| **id)
+                .map(|(entity, _, _, _)| entity);
+            if let Some(player) = winner {
+                if let Ok((equipped, ammo, shooting)) = self.world.query_one_mut::<(
+                    &mut WeaponType,
+                    &mut crate::components::Ammo,
+                    &mut Shooting,
+                )>(player)
+                {
+                    *equipped = weapon;
+                    ammo.0 = crate::constants::ammo_capacity(weapon) as f32;
+                    shooting.cooldown = FIRE_INTERVAL;
+                    shooting.pending_shot = false;
+                }
+                let _ = self.world.despawn(pickup);
+            }
+        }
+    }
 }

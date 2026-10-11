@@ -566,7 +566,7 @@
     {
       "id": 10,
       "title": "Simulation and snapshot duration",
-      "description": "Snapshot duration includes waits on client channels, exposing backpressure.",
+      "description": "Snapshot duration covers building, encoding, and publishing the latest frame to watch; it excludes client socket writes.",
       "type": "timeseries",
       "gridPos": {
         "x": 16,

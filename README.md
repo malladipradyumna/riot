@@ -5,9 +5,13 @@ A browser multiplayer shooter with a Rust authoritative server, Protobuf WebSock
 ## Features
 
 - Create or join a game by ID and choose one of three characters.
-- Random weapon assignment: pistol, AK, Desert Eagle, or rocket launcher.
+- Start with a pistol; walk over randomly spawned guns to equip them.
+- Ground guns expire after 30 seconds, shown by a filling square border.
 - Server-owned movement, bullets, damage, respawning, kills, and deaths.
+- Server-controlled 5-minute rounds with a 10-second results countdown; scores reset for the next round.
 - Four moving train carriages that restore health and ammunition aboard.
+- Positional gunshots, corner whistles, rhythmic train wheels, water ambience, and grass footsteps.
+- Damage flashes, a health bar that is green aboard the train and red outside, and one-click game-ID copying.
 - Terrain-dependent movement, river crossings, tunnels, and cover.
 - Smooth canvas rendering, a player-following camera, radar, and scoreboard.
 - Native host monitoring with VictoriaMetrics and Node Exporter.
@@ -32,7 +36,13 @@ In another terminal, serve the browser client:
 python3 -m http.server 8080 --directory client
 ```
 
-Open http://localhost:8080. Create a game and share its ID with another player. Move with WASD or arrow keys, aim with the mouse, and fire with F or the left mouse button. Step onto a train carriage to ride, heal, and refill ammunition.
+Open http://localhost:8080. Create a game and share its ID with another player. Move with WASD or arrow keys, hold Shift to sprint at 1.9× walking speed (maximum 380; train speed 400), aim with the mouse, and fire with F or the left mouse button. Step onto a train carriage to ride, heal, and refill ammunition.
+
+When switching from Docker, stop its containers first:
+
+```bash
+sudo env RIOT_SITE=http://localhost docker compose -f deploy/compose.yaml down
+```
 
 The server listens on port 8000. Its metrics and health endpoints are http://127.0.0.1:9000/metrics and http://127.0.0.1:9000/healthz.
 
@@ -76,3 +86,5 @@ Edit the map using [its terrain guide](assets/maps/README.md). Restart the serve
 Original project code and original assets are licensed under the [MIT License](LICENSE), copyright 2026 malladipradyumna. Copies or substantial portions must preserve the copyright and permission notice. Visible credit in your README or application is appreciated, but is not an additional license condition.
 
 Third-party assets and libraries retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The project MIT license does not replace those licenses.
+
+Terrain affects player walking speed only. Bullets launch along aim at three times terrain/sprint walking speed, plus the shooter’s actual world velocity (walking and train transport). They keep that combined launch velocity across tiles. Bullets pass through train carriages; the train always follows its route at a fixed speed.

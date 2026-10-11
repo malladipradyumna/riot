@@ -28,4 +28,4 @@ Keep grid dimensions synchronized with server/client map constants. Restart the
 server and refresh clients after editing the file. Assets live at repository root;
 client/assets is a symlink so the existing local HTTP server serves them.
 
-The arena includes station-side cover, broken courtyards, forest pockets, and multiple river crossings. Keep the four-carriage railway corridor clear when editing walls. Riding any carriage restores 10 HP and 10 rounds per second, capped by player health and weapon capacity.
+The arena includes station-side cover, broken courtyards, forest pockets, and multiple river crossings. Keep the four-carriage railway corridor clear when editing walls. Riding any carriage restores 3 HP and 10 rounds per second, capped by player health and weapon capacity.

@@ -14,7 +14,7 @@ https://registry.npmjs.org/protobufjs/-/protobufjs-8.8.0.tgz.
 Each game builds and encodes one shared snapshot per update, fifteen times per
 second; simulation still runs at 30 Hz.
 The browser interpolates with a 100-ms delay.
-The reference-counted bytes buffer is reused for every recipient. The acknowledgements array includes
+The reference-counted bytes buffer is published to one watch channel per game. Each connection independently reads the latest frame; older unsent snapshots are overwritten. Welcome, gunshot, kill, damage, train-whistle, and other events use the bounded mpsc queue. A connection receives Welcome before any snapshots, and watch borrows are dropped before WebSocket writes. The acknowledgements array includes
 player IDs and the latest processed request IDs, so state is identical for all
 recipients. Other gameplay events retain their existing application behavior.
 A player's respawn_count increments on death so clients teleport to the new
@@ -24,7 +24,7 @@ zero on join, persist across respawns, and are included for late joiners. The
 scoreboard shows current participants, sorted by kills descending, then deaths
 ascending and player ID for ties. It updates from snapshots, not kill notices.
 
-Train snapshots contain four separate carriages, their order, and a corner counter on the leading carriage for whistle playback. Player snapshots include remaining ammo and weapon capacity. The server consumes one round per shot and refills ammo and health while aboard any carriage. Respawning restores full health and ammo.
+Train snapshots contain four separate carriages, their order, and a corner counter on the leading carriage. Player snapshots include remaining ammo and weapon capacity. The server consumes one round per shot and refills ammo and health while aboard any carriage. Respawning restores full health and ammo.
 
 Server logging uses tracing with tracing-appender's bounded non-blocking writer.
 The writer drains on a dedicated thread. The default level is info; input logs
@@ -40,3 +40,9 @@ on the target machine. The server logs its actual worker count at startup.
 RIOT_METRICS_ADDRESS defaults to 127.0.0.1:9000 and exposes /metrics (Prometheus)
 and /healthz (liveness). See ../../deploy/README.md for ARM64 deployment and the
 provisioned Grafana dashboard.
+
+Ground Weapon objects include expires_at_millis and lifetime_millis. They have no bullet collider. The browser fills their square border using the server clock estimate; the server equips or expires each pickup authoritatively.
+
+PlayerDamaged is sent through the event mpsc queue to the victim, including lethal hits. This drives the one-second damage flash even when a snapshot skips the moment of damage or shows the player already respawned.
+
+Snapshots carry server-owned round number, intermission status, and phase end timestamp. Rounds last 5 minutes, followed by 10 seconds of frozen gameplay and results. Clients derive countdowns from server time; input is ignored during intermission. Scores reset when the next round begins.
