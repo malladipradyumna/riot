@@ -29,3 +29,8 @@ server and refresh clients after editing the file. Assets live at repository roo
 client/assets is a symlink so the existing local HTTP server serves them.
 
 The arena includes station-side cover, broken courtyards, forest pockets, and multiple river crossings. Keep the four-carriage railway corridor clear when editing walls. Riding any carriage restores 3 HP and 10 rounds per second, capped by player health and weapon capacity.
+
+Bots use terrain travel time for four-way routes between tile centers. Startup
+writes five long-route previews under `bot-paths/`, with `p` marking each route.
+These are generated views; edit `arena.txt` to change the actual map. Hitmen
+refill only from ground guns; train resupply still applies to human players.

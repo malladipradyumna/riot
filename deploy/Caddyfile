@@ -1,9 +1,11 @@
 {$RIOT_SITE} {
 	encode zstd gzip
 	log
+	# Match the browser WebSocket endpoint before the static file fallback.
 	handle /ws {
 		reverse_proxy server:8000
 	}
+	# Images, audio, the map, and the schema share the same origin as the page.
 	handle {
 		root * /srv
 		file_server

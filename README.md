@@ -35,7 +35,7 @@ In another terminal, serve the browser client:
 python3 -m http.server 8080 --directory client
 ```
 
-Open http://localhost:8080. Create a game and share its ID with another player. Move with WASD or arrow keys, hold Shift to sprint at 1.9× walking speed (maximum 380; train speed 400), aim with the mouse, and fire with F or the left mouse button. Step onto a train carriage to ride, heal, and refill ammunition.
+Open http://localhost:8080. Choose 0–50 bots and a difficulty when creating a game, then share its ID with another player. Level 1 bots walk and fight humans or bots with 30° aim standard deviation; level 2 bots walk and hunt only humans with 15° deviation; level 3 bots sprint and hunt only humans with exact aim. Each bot shot draws an independent Gaussian aim error. Joining keeps the creator’s settings. Move with WASD or arrow keys, hold Shift to sprint at 1.9× walking speed (maximum 380; train speed 400), aim with the mouse, and fire with F or the left mouse button. Step onto a train carriage to ride, heal, and refill ammunition.
 
 When switching from Docker, stop its containers first:
 
@@ -53,6 +53,13 @@ Five randomly selected long routes are written to `bot-paths/path-1.txt` through
 `path-5.txt` in the working directory, using the original map symbols with `p`
 marking each path. Set `RIOT_BOT_PATHS_DIR` to change the output directory.
 Docker writes these previews to `/tmp/bot-paths` inside the server container.
+
+Each game starts with Hitman 1, Hitman 2, and Hitman 3. Bots choose the nearest
+reachable human by terrain travel time, follow the precomputed routes, and fire
+when walls do not block their shots. When out of ammo, they seek a ground gun,
+then choose the nearest human again. Bots use the same health, respawns, and
+scoreboard as humans; they do not keep a game alive after its humans leave.
+`BOTS_PER_GAME` in `server/src/constants.rs` controls their number.
 
 ## Deploy on OCI Ampere
 
@@ -88,6 +95,27 @@ sudo env RIOT_SITE=http://localhost docker compose -f deploy/compose.yaml logs -
 | `docs/` | Design notes |
 
 Edit the map using [its terrain guide](assets/maps/README.md). Restart the server and refresh the browser after map or protocol changes. Automated tests and performance-testing code are not included.
+
+## Reading the code
+
+Start with `server/src/main.rs` for connection handling, then `server/src/game.rs`
+for room ownership, the tick loop, input, and rounds. The game task owns its ECS
+world; the manager only stores channel handles. A connection remembers its game
+handle after joining, so regular input does not lock the manager.
+
+The larger systems are grouped under `server/src/game/`: `combat.rs` handles
+shots, continuous collisions, damage, and respawns; `spawning.rs` creates human
+and bot players and manages pickups; `snapshot.rs` builds and encodes the shared
+frame. `bot.rs` owns the route table and AI input decisions. `terrain.rs` reads
+the ASCII map, `train.rs` moves carriages and riders, and `collision.rs` contains
+the geometry helpers.
+
+In the browser, `wire.js` translates protobuf messages, `assets.js` loads art and
+handles positional sound, and `main.js` runs the lobby, input, snapshot buffer,
+and rendering. Incoming frames replace current state; a bounded history smooths
+positions between frames. Health, ammo, scores, and round transitions stay
+server-authoritative. The schema is `assets/protocol/game.proto`; removed wire
+IDs are reserved rather than reused.
 
 ## License and attribution
 

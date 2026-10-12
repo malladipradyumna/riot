@@ -11,3 +11,6 @@ deploy/.env
 *.key
 *.pem
 .env
+
+# Route previews are runtime output, not image inputs.
+bot-paths

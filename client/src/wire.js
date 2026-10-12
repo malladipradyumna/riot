@@ -1,3 +1,25 @@
+// Oneof field names are wire details; application code uses the labels on the left.
+const CLIENT_MESSAGE_FIELDS = {
+  JoinGame: 'join_game',
+  ExitGame: 'exit_game',
+  PlayerInput: 'player_input',
+};
+const SERVER_MESSAGE_NAMES = {
+  welcome: 'Welcome',
+  state_snapshot: 'StateSnapshot',
+  gun_fired: 'GunFired',
+  player_killed: 'PlayerKilled',
+  error: 'Error',
+  train_whistle: 'TrainWhistle',
+  player_damaged: 'PlayerDamaged',
+};
+const SNAPSHOT_OBJECT_NAMES = {
+  player: 'Player',
+  bullet: 'Bullet',
+  weapon: 'Weapon',
+  train: 'Train',
+};
+
 // The browser and Rust consume the same schema. The runtime is vendored locally.
 let clientEnvelope;
 let serverEnvelope;
@@ -16,21 +38,21 @@ const protocolReady = fetch('assets/protocol/game.proto')
 
 // Keep protobuf field names at this boundary; the rest of the client uses message names.
 function encodeClientMessage(message) {
-  const fields = {
-    JoinGame: 'join_game',
-    ExitGame: 'exit_game',
-    PlayerInput: 'player_input',
-  };
   const type = Object.keys(message)[0];
-  if (!fields[type] || !clientEnvelope)
+  if (!CLIENT_MESSAGE_FIELDS[type] || !clientEnvelope)
     throw new Error('Invalid client message');
-  const value = clientEnvelope.fromObject({ [fields[type]]: message[type] });
+  // Normalize JS enum names and numbers, validate, then serialize the envelope.
+  const value = clientEnvelope.fromObject({
+    [CLIENT_MESSAGE_FIELDS[type]]: message[type],
+  });
   const error = clientEnvelope.verify(value);
   if (error) throw new Error(error);
   return clientEnvelope.encode(value).finish();
 }
 
+// Decode binary frames and turn protobuf oneofs into the application message shapes.
 function decodeServerMessage(bytes) {
+  // Convert protobuf longs to Numbers and enum values to the strings used by the UI.
   const value = serverEnvelope.toObject(serverEnvelope.decode(bytes), {
     longs: Number,
     enums: String,
@@ -38,38 +60,21 @@ function decodeServerMessage(bytes) {
     arrays: true,
     oneofs: true,
   });
-  const tags = {
-    welcome: 'Welcome',
-    state_snapshot: 'StateSnapshot',
-    gun_fired: 'GunFired',
-    player_killed: 'PlayerKilled',
-    error: 'Error',
-    player_died: 'PlayerDied',
-    player_left: 'PlayerLeft',
-    pong: 'Pong',
-    train_whistle: 'TrainWhistle',
-    player_damaged: 'PlayerDamaged',
-  };
   const type = value.payload;
-  if (!tags[type]) throw new Error('Missing server payload');
+  if (!SERVER_MESSAGE_NAMES[type]) throw new Error('Missing server payload');
   const payload = value[type];
+  // Expand nested object oneofs into the same shapes documented in types.js.
   if (type === 'state_snapshot') {
-    const objects = {
-      player: 'Player',
-      bullet: 'Bullet',
-      weapon: 'Weapon',
-      boundary: 'Boundary',
-      train: 'Train',
-    };
     payload.objects = payload.objects.map((object) => {
       const kind = object.object;
-      if (!objects[kind]) throw new Error('Unknown snapshot object');
+      if (!SNAPSHOT_OBJECT_NAMES[kind])
+        throw new Error('Unknown snapshot object');
       return {
         entity_id: object.entity_id,
         position: object.position || { x: 0, y: 0 },
-        object: { [objects[kind]]: object[kind] },
+        object: { [SNAPSHOT_OBJECT_NAMES[kind]]: object[kind] },
       };
     });
   }
-  return { [tags[type]]: payload };
+  return { [SERVER_MESSAGE_NAMES[type]]: payload };
 }

@@ -1,11 +1,9 @@
-use serde::{Deserialize, Serialize};
-
 // These IDs go over the wire. hecs::Entity stays inside the server's world.
 pub type PlayerId = u64;
 pub type GameId = String;
 pub type EntityId = u64;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CharacterType {
     #[default]
     Blue,
@@ -17,24 +15,26 @@ pub enum CharacterType {
     Cyan,
     Survivor,
     Zombie,
+    Villain,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+// World units, not screen pixels. Camera conversion happens only in the browser.
 pub struct Position {
     pub x: f32,
     pub y: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WeaponType {
     Pistol,
     DesertEagle,
     Ak47,
     RocketLauncher,
-    Flamethrower,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+// Snapshot shapes assembled from ECS components, not components themselves.
 pub enum Object {
     Train {
         carriage_index: u32,
@@ -69,13 +69,10 @@ pub enum Object {
         aim_angle: f32,
         weapon_type: WeaponType,
     },
-    Boundary {
-        width: f32,
-        height: f32,
-    },
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+// Every dynamic object carries an ID and position outside its specific payload.
 pub struct ObjectState {
     pub entity_id: EntityId,
     pub position: Position,

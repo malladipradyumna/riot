@@ -22,6 +22,10 @@ these files. Add a weapon entry there when adding a new gun. Players start with 
   `hitman1_hold.png`, `manOld_hold.png`, `soldier1_hold.png`, `robot1_hold.png`,
   `survivor1_hold.png`, and `zoimbie1_hold.png`.
   Original license included as `Kenney-License.txt`.
+  Bot villains use Kenney's unmodified `hitman1_stand.png`, stored as
+  `characters/villain/player.png`, from the official
+  [Top-down Shooter pack](https://kenney.nl/assets/top-down-shooter), also CC0.
+  `Villain` is reserved for bots and is not a lobby character choice.
 - Bullet sheet: **dantheman.fyi / oglsdl**, [Ammo Sprite](https://opengameart.org/content/ammo-sprite), CC0.
   Original file: `Ammo000.png`. The renderer selects its left cartridge and tints
   it golden for every weapon; the downloaded image is unchanged.

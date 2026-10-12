@@ -1,3 +1,4 @@
+// Generate Rust protobuf types with the bundled protoc, including on ARM hosts.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let schema = "../assets/protocol/game.proto";
     println!("cargo:rerun-if-changed={schema}");

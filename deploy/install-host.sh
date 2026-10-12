@@ -9,6 +9,7 @@ trap 'printf "ERROR: setup failed at line %s. Check the output above.\n" "$LINEN
 [[ $EUID -eq 0 ]] || fail 'Run this script using sudo bash.'
 [[ -d /run/systemd/system ]] || fail 'This installer requires a systemd host.'
 [[ -r /etc/os-release ]] || fail '/etc/os-release is missing.'
+# Use the host identity to select the matching package repository.
 source /etc/os-release
 case "$ID" in
   ubuntu|debian) family=apt ;;
@@ -21,9 +22,11 @@ case "$(uname -m)" in
   *) fail 'Supported architectures are ARM64 and AMD64.' ;;
 esac
 
+# Hold a lock while changing package sources; parallel setup can race apt/dnf.
 mkdir -p /run/lock
 exec 9>/run/lock/riot-host-setup.lock
 flock -n 9 || fail 'Another setup process is running.'
+# Downloads live in a temporary directory and are removed on every exit.
 work_dir=$(mktemp -d /tmp/riot-host-setup.XXXXXXXX)
 trap 'rm -rf -- "$work_dir"' EXIT
 
@@ -37,6 +40,7 @@ else
   dnf install -y ca-certificates curl coreutils util-linux gnupg2
 fi
 
+# Retry transient failures, but never follow a redirect onto plain HTTP.
 download() {
   curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
     --connect-timeout 10 --max-time 180 --proto '=https' --proto-redir '=https' \
@@ -44,6 +48,7 @@ download() {
 }
 
 printf '\nInstalling Docker Engine and Compose for the application...\n'
+# Keep an existing Engine/Compose install; do not silently remove conflicting packages.
 if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
   if [[ $family == apt ]]; then
     install -d -m 0755 /etc/apt/keyrings
@@ -71,6 +76,7 @@ REPO
     dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   fi
 fi
+# Starting the daemon and checking its API catches installation failures immediately.
 systemctl enable --now docker.service
 docker info >/dev/null
 docker compose version

@@ -1,27 +1,24 @@
+// Application messages used by game logic. codec.rs handles the protobuf boundary.
 use crate::types::{CharacterType, GameId, PlayerId, Position, WeaponType};
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
+// Client clocks and unused wire metadata are deliberately absent from simulation messages.
 pub enum ClientMessage {
+    // None creates a room; Some joins the specified existing room.
     JoinGame {
         client_request_id: String,
-        timestamp_millis: u64,
         username: String,
-        #[serde(default)]
         character_type: CharacterType,
         game_id: Option<GameId>,
+        bot_settings: crate::bot::Settings,
     },
     ExitGame {
-        client_request_id: String,
-        timestamp_millis: u64,
-        username: String,
         game_id: GameId,
         player_id: PlayerId,
     },
+    // Intent and request identity only; positions and damage are server-owned.
     PlayerInput {
         client_request_id: String,
-        timestamp_millis: u64,
         player_id: PlayerId,
         game_id: GameId,
         up: bool,
@@ -29,13 +26,13 @@ pub enum ClientMessage {
         left: bool,
         right: bool,
         shooting: bool,
-        #[serde(default)]
         sprinting: bool,
         aim_angle: f32,
     },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
+// Discrete messages use mpsc. Full state frames are encoded separately for watch.
 pub enum ServerMessage {
     PlayerDamaged {
         game_id: GameId,
@@ -47,6 +44,7 @@ pub enum ServerMessage {
         game_id: GameId,
         position: Position,
     },
+    // The victim's old position locates death audio after their immediate respawn.
     PlayerKilled {
         game_id: GameId,
         killer_id: PlayerId,
@@ -65,27 +63,11 @@ pub enum ServerMessage {
         position: Position,
         aim_angle: f32,
     },
+    // Sent before the connection is allowed to forward snapshots.
     Welcome {
         server_request_id: String,
         timestamp_millis: u64,
         player_id: PlayerId,
         game_id: GameId,
     },
-    PlayerDied {
-        server_request_id: String,
-        timestamp_millis: u64,
-        player_id: PlayerId,
-        game_id: GameId,
-        last_processed_client_request_id: String,
-        dead_player_id: PlayerId,
-    },
-    PlayerLeft {
-        server_request_id: String,
-        timestamp_millis: u64,
-        player_id: PlayerId,
-        game_id: GameId,
-        last_processed_client_request_id: String,
-        abandoned_player_id: PlayerId,
-    },
-    Pong,
 }

@@ -1,3 +1,6 @@
+> These are the original design plans, including proposed features. The current
+> architecture and implemented gameplay are documented in [README.md](../README.md).
+
 **RIOT**
 
 **Multiplayer Top-Down Shooter**

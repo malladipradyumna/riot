@@ -1,5 +1,6 @@
 name: riot
 
+# Both services use bounded log files so a long-running host does not fill its disk.
 x-logging: &logging
   driver: json-file
   options:
@@ -17,6 +18,7 @@ services:
     init: true
     stop_signal: SIGINT
     stop_grace_period: 15s
+    # Runtime state is in memory; only route previews need a writable temporary directory.
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -35,12 +37,15 @@ services:
     restart: unless-stopped
     environment:
       RIOT_SITE: ${RIOT_SITE:?Set RIOT_SITE in deploy/.env}
+    # Caddy is the public entry point; the game port stays on the Docker network.
     ports:
       - "80:80"
       - "443:443"
+    # Preserve HTTPS certificate state when containers are rebuilt.
     volumes:
       - caddy-data:/data
       - caddy-config:/config
+    # Startup order only: a browser join is the deployment readiness check.
     depends_on:
       server:
         condition: service_started

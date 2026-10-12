@@ -18,6 +18,8 @@
  * @typedef {ClientRequest & {
  *   username: string,
  *   character_type: CharacterType,
+ *   bot_count?: number,
+ *   bot_difficulty?: 1 | 2 | 3,
  *   game_id: GameId | null
  * }} JoinGamePayload
  */
@@ -59,12 +61,6 @@
  */
 
 /**
- * @typedef {ServerResponse & {
- *   last_processed_client_request_id: string
- * }} ProcessedResponse
- */
-
-/**
  * @typedef {Object} RoundState
  * @property {number} number
  * @property {boolean} intermission
@@ -95,7 +91,7 @@
  */
 
 /**
- * @typedef {Object} PlayerKilledMessage
+ * @typedef {Object} PlayerKilledPayload
  * @property {GameId} game_id
  * @property {PlayerId} killer_id
  * @property {PlayerId} victim_id
@@ -118,8 +114,6 @@
 /** @typedef {{ Welcome: ServerResponse }} WelcomeMessage */
 /** @typedef {{ GunFired: GunFiredPayload }} GunFiredMessage */
 /** @typedef {{ StateSnapshot: SnapshotPayload }} StateSnapshotMessage */
-/** @typedef {{ PlayerDied: ProcessedResponse & { dead_player_id: PlayerId } }} PlayerDiedMessage */
-/** @typedef {{ PlayerLeft: ProcessedResponse & { abandoned_player_id: PlayerId } }} PlayerLeftMessage */
 
 // wire.js transports these application objects as binary Protobuf envelopes.
 /**
@@ -127,12 +121,9 @@
  *   | TrainWhistleMessage
  *   | WelcomeMessage
  *   | StateSnapshotMessage
- *   | PlayerDiedMessage
- *   | PlayerLeftMessage
  *   | GunFiredMessage
- *   | { PlayerKilled: PlayerKilledMessage }
- *   | { Error: { code: string } }
- *   | { Pong: {} }} ServerMessage
+ *   | { PlayerKilled: PlayerKilledPayload }
+ *   | { Error: { code: string } }} ServerMessage
  */
 
 export {};

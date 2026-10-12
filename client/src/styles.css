@@ -1,3 +1,4 @@
+/* Shared colors preserve the same worn-paper look across lobby and game HUD. */
 :root {
   color-scheme: dark;
   --ink: #e4d3a1;
@@ -9,6 +10,7 @@
 * {
   box-sizing: border-box;
 }
+/* Center the outer card and keep the background independent of the arena. */
 body {
   margin: 0;
   min-height: 100vh;
@@ -21,6 +23,7 @@ body {
     repeating-linear-gradient(0deg, #00000014 0 1px, transparent 1px 4px),
     radial-gradient(ellipse at top, #393b2d, #15170f 80%);
 }
+/* Lobby sizing; the in-game rule below widens this same card after joining. */
 .lobby {
   width: 100%;
   max-width: 460px;
@@ -49,13 +52,16 @@ label {
   font-size: 13px;
   letter-spacing: 1px;
 }
+/* Form controls share type and square edges so the UI stays visually consistent. */
 input,
+select,
 button {
   min-height: 42px;
   border-radius: 0;
   font: inherit;
 }
-input {
+input,
+select {
   width: 100%;
   min-width: 0;
   padding: 10px 12px;
@@ -89,7 +95,9 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+/* Keyboard focus remains visible without adding a ring to every mouse click. */
 input:focus-visible,
+select:focus-visible,
 button:focus-visible {
   outline: 2px solid #dcc98e;
   outline-offset: 3px;
@@ -98,6 +106,7 @@ button:focus-visible {
   margin: 20px 0 0;
   font-size: 13px;
 }
+/* Invite and exit controls appear only while connected to a game. */
 #session {
   margin-top: 16px;
 }
@@ -113,12 +122,14 @@ button:focus-visible {
   color: #fff0c8;
   border-color: #d69e76;
 }
+/* Expand the card for the arena and scoreboard, while retaining the original layout. */
 .lobby.in-game {
   max-width: 1312px;
 }
 #board {
   margin-top: 20px;
 }
+/* Keep health on the left and live ammo/player/FPS information on the right. */
 .board-heading {
   display: flex;
   justify-content: space-between;
@@ -155,6 +166,7 @@ button:focus-visible {
   text-transform: uppercase;
   font-size: 11px;
 }
+/* Red is the default health color; aboard the train the custom property turns green. */
 #health-bar {
   --health-color: #d24e45;
   display: block;
@@ -177,6 +189,7 @@ button:focus-visible {
   --health-color: #77ff65;
   box-shadow: 0 0 12px #77ff6570;
 }
+/* The fixed damage effect covers the screen but never receives mouse input. */
 #damage-flash {
   position: fixed;
   inset: 0;
@@ -186,6 +199,7 @@ button:focus-visible {
   background: radial-gradient(ellipse, #ff242410 20%, #b0000070 100%);
   box-shadow: inset 0 0 100px 35px #ee2828;
 }
+/* Keep Copy to the right of the game ID, including on narrow screens. */
 .game-id-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -201,12 +215,14 @@ button:focus-visible {
   position: relative;
   border: 2px solid #79765b;
 }
+/* The arena takes remaining width and the scoreboard keeps its own side column. */
 .game-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 232px;
   align-items: start;
   gap: 16px;
 }
+/* Standings are a scrolling-safe text/table panel, not drawn into the canvas. */
 .scoreboard-panel {
   min-width: 0;
   padding: 12px;
@@ -247,6 +263,7 @@ button:focus-visible {
   color: #a9c789;
   background: #303923;
 }
+/* Scale the fixed world viewport to the card while preserving its aspect ratio. */
 #arena {
   display: block;
   width: 100%;
@@ -254,6 +271,7 @@ button:focus-visible {
   background: #191c17;
   image-rendering: pixelated;
 }
+/* Anchor the radar inside the arena so resizing the card carries it along. */
 .minimap-panel {
   position: absolute;
   right: 10px;
@@ -287,6 +305,7 @@ button:focus-visible {
   color: #b9b596;
   font-size: 9px;
 }
+/* Radar legend markers use the same colors as the canvas minimap. */
 .dot {
   width: 5px;
   height: 5px;
@@ -320,6 +339,7 @@ button:focus-visible {
   padding: 0 6px;
   text-transform: uppercase;
 }
+/* A compact radio grid shows every available human character before joining. */
 .character-options {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -356,6 +376,7 @@ button:focus-visible {
   text-align: center;
   font-size: 12px;
 }
+/* Keep the game ID and Join button side by side until the smallest breakpoint. */
 .join-row {
   display: flex;
   gap: 10px;
@@ -363,6 +384,7 @@ button:focus-visible {
 #join-game {
   flex-shrink: 0;
 }
+/* Server kill events briefly occupy this message row; empty rows take no space. */
 #kill-announcement {
   color: #e2bd74;
   text-align: center;
@@ -372,11 +394,13 @@ button:focus-visible {
 #kill-announcement:empty {
   display: none;
 }
+/* Move the scoreboard below the arena when two columns would be cramped. */
 @media (max-width: 900px) {
   .game-layout {
     grid-template-columns: 1fr;
   }
 }
+/* Tighten the HUD and radar for smaller browser windows. */
 @media (max-width: 600px) {
   body {
     padding: 12px;
@@ -405,12 +429,14 @@ button:focus-visible {
     height: 54px;
   }
 }
+/* Stack only the lobby join controls at the narrowest width. */
 @media (max-width: 400px) {
   .join-row {
     flex-direction: column;
   }
 }
 
+/* Large digits serve both the active round and the next-round countdown. */
 .round-hud {
   text-align: center;
   margin: 12px 0;
@@ -428,6 +454,7 @@ button:focus-visible {
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
+/* During the break hide the map and make standings the main content. */
 #board.intermission .arena-frame,
 #board.intermission .board-note {
   display: none;
@@ -442,4 +469,14 @@ button:focus-visible {
 }
 #board.intermission .scoreboard-panel table {
   font-size: 18px;
+}
+
+/* Creation settings are independent of the join-by-ID controls. */
+#bot-settings {
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+}
+#bot-settings input {
+  margin-bottom: 12px;
 }

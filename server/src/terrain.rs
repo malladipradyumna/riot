@@ -1,10 +1,14 @@
-use crate::types::Position;
+use crate::{
+    collision::{box_time, circle_time},
+    types::Position,
+};
 use std::sync::OnceLock;
 
 pub const TILE_SIZE: f32 = 50.0;
 // All games share the same read-only map. Load it once, not once per game.
 static MAP: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 
+// Read and validate the shared ASCII map before accepting players.
 pub fn load() -> &'static Vec<Vec<u8>> {
     MAP.get_or_init(|| {
         let assets = std::env::var_os("RIOT_ASSETS_DIR")
@@ -14,6 +18,7 @@ pub fn load() -> &'static Vec<Vec<u8>> {
             });
         let text = std::fs::read_to_string(assets.join("maps/arena.txt"))
             .expect("Cannot load assets/maps/arena.txt");
+        // Fail at startup rather than discover bad dimensions in a running game.
         let rows: Vec<Vec<u8>> = text.lines().map(|line| line.as_bytes().to_vec()).collect();
         assert_eq!(rows.len(), 36, "Map must have 36 rows");
         assert!(
@@ -25,6 +30,7 @@ pub fn load() -> &'static Vec<Vec<u8>> {
     })
 }
 
+// Return walking units per second for the tile under this position.
 pub fn speed(position: Position) -> f32 {
     let tile = tile(position.x, position.y);
     match tile {
@@ -37,6 +43,7 @@ pub fn speed(position: Position) -> f32 {
     }
 }
 
+// Look up a map symbol; outside the map behaves like a wall.
 pub fn tile(x: f32, y: f32) -> u8 {
     if x < 0.0 || y < 0.0 {
         return b'#';
@@ -48,6 +55,7 @@ pub fn tile(x: f32, y: f32) -> u8 {
         .unwrap_or(b'#')
 }
 
+// Check whether a circle fits without touching any neighboring wall tile.
 pub fn can_stand(position: Position, radius: f32) -> bool {
     let min_x = ((position.x - radius) / TILE_SIZE).floor() as i32;
     let max_x = ((position.x + radius) / TILE_SIZE).floor() as i32;
@@ -58,6 +66,7 @@ pub fn can_stand(position: Position, radius: f32) -> bool {
             if tile(x as f32 * TILE_SIZE, y as f32 * TILE_SIZE) != b'#' {
                 continue;
             }
+            // The closest point on the wall box catches both face and corner overlap.
             let nearest_x = position
                 .x
                 .clamp(x as f32 * TILE_SIZE, (x + 1) as f32 * TILE_SIZE);
@@ -77,7 +86,6 @@ pub fn can_stand(position: Position, radius: f32) -> bool {
 // Sweep a circle against nearby wall tiles. The two face rectangles plus
 // corner circles form the exact rounded rectangle, avoiding corner false hits.
 pub fn segment_hit_fraction(start: Position, end: Position, radius: f32) -> Option<f32> {
-    use crate::collision::{box_time, circle_time};
     let mut first: Option<f32> = None;
     let min_x = ((start.x.min(end.x) - radius) / TILE_SIZE).floor() as i32;
     let max_x = ((start.x.max(end.x) + radius) / TILE_SIZE).floor() as i32;

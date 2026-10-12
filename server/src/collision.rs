@@ -26,6 +26,7 @@ pub fn circle_time(start: Position, end: Position, center: Position, radius: f32
     (0.0..=1.0).contains(&t).then_some(t)
 }
 
+// Clip a segment against each box axis and return the first overlap fraction.
 pub fn box_time(start: Position, end: Position, min: Position, max: Position) -> Option<f32> {
     let mut entry: f32 = 0.0;
     let mut exit: f32 = 1.0;

@@ -1,3 +1,4 @@
+// Use the local game port in development and same-origin /ws behind Caddy.
 function serverWebSocketUrl(location) {
   // Python's local static server uses a separate game port; deployment uses Caddy.
   if (

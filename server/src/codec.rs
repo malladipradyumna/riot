@@ -8,12 +8,18 @@ use prost::Message;
 // Translate protobuf messages here so gameplay code can use our own Rust types.
 pub fn decode_client(data: &[u8]) -> Result<ClientMessage, &'static str> {
     use wire::client_envelope::Payload;
+    // Reject malformed frames and missing oneof payloads before they reach gameplay.
     let message = wire::ClientEnvelope::decode(data).map_err(|_| "CORRUPT_MSG")?;
     Ok(match message.payload.ok_or("CORRUPT_MSG")? {
+        // A client may choose human cosmetics, but cannot request the bot-only sprite.
         Payload::JoinGame(p) => ClientMessage::JoinGame {
             client_request_id: p.client_request_id,
-            timestamp_millis: p.timestamp_millis,
             username: p.username,
+            bot_settings: crate::bot::Settings::new(
+                p.bot_count,
+                p.bot_difficulty,
+                p.game_id.is_none(),
+            )?,
             game_id: p.game_id,
             character_type: match wire::CharacterType::try_from(p.character_type)
                 .map_err(|_| "CORRUPT_MSG")?
@@ -27,18 +33,15 @@ pub fn decode_client(data: &[u8]) -> Result<ClientMessage, &'static str> {
                 wire::CharacterType::Survivor => types::CharacterType::Survivor,
                 wire::CharacterType::Zombie => types::CharacterType::Zombie,
                 wire::CharacterType::Green => types::CharacterType::Green,
+                wire::CharacterType::Villain => return Err("CORRUPT_MSG"),
             },
         },
         Payload::ExitGame(p) => ClientMessage::ExitGame {
-            client_request_id: p.client_request_id,
-            timestamp_millis: p.timestamp_millis,
-            username: p.username,
             game_id: p.game_id,
             player_id: p.player_id,
         },
         Payload::PlayerInput(p) => ClientMessage::PlayerInput {
             client_request_id: p.client_request_id,
-            timestamp_millis: p.timestamp_millis,
             game_id: p.game_id,
             player_id: p.player_id,
             up: p.up,
@@ -52,23 +55,26 @@ pub fn decode_client(data: &[u8]) -> Result<ClientMessage, &'static str> {
     })
 }
 
+// Map gameplay enums to stable protobuf values explicitly.
 fn weapon(value: types::WeaponType) -> i32 {
     (match value {
         types::WeaponType::Pistol => wire::WeaponType::Pistol,
         types::WeaponType::DesertEagle => wire::WeaponType::DesertEagle,
         types::WeaponType::Ak47 => wire::WeaponType::Ak47,
         types::WeaponType::RocketLauncher => wire::WeaponType::RocketLauncher,
-        types::WeaponType::Flamethrower => wire::WeaponType::Flamethrower,
     }) as i32
 }
+// Copy a gameplay point into the protobuf representation.
 fn position(value: types::Position) -> wire::Position {
     wire::Position {
         x: value.x,
         y: value.y,
     }
 }
+// Convert one snapshot object into its matching protobuf oneof.
 fn object(value: &types::ObjectState) -> wire::ObjectState {
     use wire::object_state::Object;
+    // Keep the stable outer ID/position alongside the object-specific payload.
     let object = match &value.object {
         types::Object::Train {
             carriage_index,
@@ -111,6 +117,7 @@ fn object(value: &types::ObjectState) -> wire::ObjectState {
                 types::CharacterType::Survivor => wire::CharacterType::Survivor as i32,
                 types::CharacterType::Zombie => wire::CharacterType::Zombie as i32,
                 types::CharacterType::Green => wire::CharacterType::Green as i32,
+                types::CharacterType::Villain => wire::CharacterType::Villain as i32,
             },
             username: username.clone(),
             health: *health,
@@ -142,10 +149,6 @@ fn object(value: &types::ObjectState) -> wire::ObjectState {
             expires_at_millis: *expires_at_millis,
             lifetime_millis: *lifetime_millis,
         }),
-        types::Object::Boundary { width, height } => Object::Boundary(wire::Boundary {
-            width: *width,
-            height: *height,
-        }),
     };
     wire::ObjectState {
         entity_id: value.entity_id,
@@ -154,6 +157,7 @@ fn object(value: &types::ObjectState) -> wire::ObjectState {
     }
 }
 
+// Put a server payload in the envelope and return shared immutable bytes.
 fn encode(payload: wire::server_envelope::Payload) -> Bytes {
     Bytes::from(
         wire::ServerEnvelope {
@@ -162,11 +166,13 @@ fn encode(payload: wire::server_envelope::Payload) -> Bytes {
         .encode_to_vec(),
     )
 }
+// Encode a short application error for a client that cannot proceed.
 pub fn error(code: &str) -> Bytes {
     encode(wire::server_envelope::Payload::Error(wire::Error {
         code: code.into(),
     }))
 }
+// Serialize the shared state frame once for all clients in a game.
 pub fn encode_snapshot(
     game_id: &str,
     timestamp_millis: u64,
@@ -185,6 +191,7 @@ pub fn encode_snapshot(
     ))
 }
 
+// Serialize a discrete reply or event, separate from the snapshot channel.
 pub fn encode_server(message: &ServerMessage) -> Bytes {
     use wire::server_envelope::Payload;
     encode(match message {
@@ -254,36 +261,5 @@ pub fn encode_server(message: &ServerMessage) -> Bytes {
                 y: position.y,
             }),
         }),
-        ServerMessage::PlayerDied {
-            server_request_id,
-            timestamp_millis,
-            player_id,
-            game_id,
-            last_processed_client_request_id,
-            dead_player_id,
-        } => Payload::PlayerDied(wire::PlayerDied {
-            server_request_id: server_request_id.clone(),
-            timestamp_millis: *timestamp_millis,
-            player_id: *player_id,
-            game_id: game_id.clone(),
-            last_processed_client_request_id: last_processed_client_request_id.clone(),
-            dead_player_id: *dead_player_id,
-        }),
-        ServerMessage::PlayerLeft {
-            server_request_id,
-            timestamp_millis,
-            player_id,
-            game_id,
-            last_processed_client_request_id,
-            abandoned_player_id,
-        } => Payload::PlayerLeft(wire::PlayerLeft {
-            server_request_id: server_request_id.clone(),
-            timestamp_millis: *timestamp_millis,
-            player_id: *player_id,
-            game_id: game_id.clone(),
-            last_processed_client_request_id: last_processed_client_request_id.clone(),
-            abandoned_player_id: *abandoned_player_id,
-        }),
-        ServerMessage::Pong => Payload::Pong(wire::Pong {}),
     })
 }

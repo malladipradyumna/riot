@@ -1,5 +1,6 @@
 // Keys match CharacterType and WeaponType values in server snapshots.
 const CHARACTER_ASSETS = {
+  Villain: { sprite: 'assets/characters/villain/player.png' },
   Blue: { sprite: 'assets/characters/blue/player.png' },
   Brown: { sprite: 'assets/characters/brown/player.png' },
   Black: { sprite: 'assets/characters/black/player.png' },
@@ -74,6 +75,7 @@ const TERRAIN_SPEEDS = {
   u: 160,
 };
 let terrainRows = [];
+// Validate the same ASCII map the server reads before allowing a join.
 const mapReady = fetch('assets/maps/arena.txt').then(async (response) => {
   if (!response.ok) throw new Error('Could not load map');
   terrainRows = (await response.text()).trimEnd().split(/\r?\n/);
@@ -83,12 +85,14 @@ const mapReady = fetch('assets/maps/arena.txt').then(async (response) => {
   )
     throw new Error('Invalid map');
 });
+// Look up the tile under a rendered player for interpolation and footsteps.
 function terrainAt(x, y) {
   return (
     terrainRows[Math.floor(y / TILE_SIZE)]?.[Math.floor(x / TILE_SIZE)] || '.'
   );
 }
 
+// Images are loaded once; frame rendering looks them up without creating new elements.
 const assetImages = new Map();
 const imagePaths = [
   ...new Set([
@@ -102,6 +106,7 @@ const imagePaths = [
     ]),
   ]),
 ];
+// Join waits for the schema, map, and every image to be ready together.
 const assetsReady = Promise.all([
   protocolReady.then((ready) => {
     if (!ready) throw new Error('Could not load Protobuf protocol');
@@ -128,8 +133,8 @@ const assetsReady = Promise.all([
 );
 
 let audioContext = null;
-const weaponSounds = new Map();
-const pendingSounds = new Map();
+const soundBuffers = new Map();
+const pendingAudioLoads = new Map();
 const SOUND_ASSETS = {
   ...WEAPON_ASSETS,
   TrainWheels: { sound: 'assets/props/train-wheels.wav' },
@@ -146,19 +151,20 @@ function unlockAudio() {
   if (!audioContext) audioContext = new Context({ latencyHint: 'interactive' });
   if (audioContext.state !== 'running')
     audioContext.resume().catch(console.error);
+  // Share decoded buffers and in-flight loads across repeated user gestures.
   for (const [type, asset] of Object.entries(SOUND_ASSETS)) {
-    if (weaponSounds.has(type) || pendingSounds.has(type)) continue;
+    if (soundBuffers.has(type) || pendingAudioLoads.has(type)) continue;
     const loading = fetch(asset.sound, { cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Could not load ${asset.sound}`);
-        weaponSounds.set(
+        soundBuffers.set(
           type,
           await audioContext.decodeAudioData(await response.arrayBuffer()),
         );
       })
       .catch((error) => console.error(error))
-      .finally(() => pendingSounds.delete(type));
-    pendingSounds.set(type, loading);
+      .finally(() => pendingAudioLoads.delete(type));
+    pendingAudioLoads.set(type, loading);
   }
 }
 
@@ -172,8 +178,9 @@ function soundLevels(source, listener, range = 450) {
   };
 }
 
-function playWeaponSound(type, position, listener, baseVolume = 0.4) {
-  const buffer = weaponSounds.get(type);
+// Play one server event or footstep using the source position and local listener.
+function playSound(type, position, listener, baseVolume = 0.4) {
+  const buffer = soundBuffers.get(type);
   if (
     !audioContext ||
     audioContext.state !== 'running' ||
@@ -202,6 +209,7 @@ function playWeaponSound(type, position, listener, baseVolume = 0.4) {
 
 const tintedBulletSprites = new Map();
 
+// Cache a golden projectile image for each weapon instead of tinting every frame.
 function bulletSprite(weaponType, color) {
   const key = `${weaponType}:${color}`;
   if (tintedBulletSprites.has(key)) return tintedBulletSprites.get(key);
@@ -228,6 +236,7 @@ function bulletSprite(weaponType, color) {
 // Each ambient sound owns at most one loop. Repeated frames adjust its source,
 // gain and pan without creating more nodes or replaying the buffer.
 const ambientLoops = new Map();
+// Stop and disconnect all nodes belonging to this one loop.
 function stopAmbientLoop(type) {
   const loop = ambientLoops.get(type);
   if (!loop) return;
@@ -237,12 +246,13 @@ function stopAmbientLoop(type) {
   loop.pan.disconnect();
   ambientLoops.delete(type);
 }
+// Start a loop once, then smoothly update its volume and left/right balance.
 function updateAmbientLoop(type, position, listener, baseVolume, range) {
   if (!position || !listener) {
     stopAmbientLoop(type);
     return;
   }
-  const buffer = weaponSounds.get(type);
+  const buffer = soundBuffers.get(type);
   if (!audioContext || audioContext.state !== 'running' || !buffer) return;
   let loop = ambientLoops.get(type);
   if (!loop) {
@@ -261,6 +271,7 @@ function updateAmbientLoop(type, position, listener, baseVolume, range) {
     ambientLoops.set(type, loop);
   }
   const levels = soundLevels(position, listener, range);
+  // Ease gain and pan so movement does not produce sudden volume jumps.
   loop.gain.gain.setTargetAtTime(
     document.hidden ? 0 : levels.volume * baseVolume,
     audioContext.currentTime,
@@ -268,6 +279,7 @@ function updateAmbientLoop(type, position, listener, baseVolume, range) {
   );
   loop.pan.pan.setTargetAtTime(levels.pan, audioContext.currentTime, 0.08);
 }
+// Use the nearest carriage as the source for the shared wheel-clatter loop.
 function updateTrainAudio(trains, player) {
   if (!player || !trains.length) {
     stopTrainAudio();
@@ -282,6 +294,7 @@ function updateTrainAudio(trains, player) {
   // Wheel clatter has a wider audible range than individual gunshots.
   updateAmbientLoop('TrainWheels', nearest, player, 0.85, 1600);
 }
+// Stop wheel clatter when leaving the game or entering the round break.
 function stopTrainAudio() {
   stopAmbientLoop('TrainWheels');
 }
@@ -289,12 +302,14 @@ function stopTrainAudio() {
 const footstepPositions = new Map();
 let nearestWater = null;
 let nextWaterScan = 0;
+// Update nearby water audio and count distance walked for footstep sounds.
 function updateTerrainAudio(players, listener) {
   if (!listener) {
     stopTerrainAudio();
     return;
   }
   const now = performance.now();
+  // Nearby water changes slowly enough to scan every 150ms instead of every frame.
   if (now >= nextWaterScan) {
     nextWaterScan = now + 150;
     nearestWater = null;
@@ -317,6 +332,7 @@ function updateTerrainAudio(players, listener) {
     }
   }
   updateAmbientLoop('Water', nearestWater, listener, 0.15, 180);
+  // Track step distance per life; a respawn must not sound like a long footstep.
   const present = new Set();
   for (const player of players) {
     present.add(player.player_id);
@@ -334,7 +350,7 @@ function updateTerrainAudio(players, listener) {
     ) {
       walked += distance;
       if (walked >= 45) {
-        playWeaponSound('GrassStep', player, listener, 0.22);
+        playSound('GrassStep', player, listener, 0.22);
         walked %= 45;
       }
     } else {
@@ -350,12 +366,14 @@ function updateTerrainAudio(players, listener) {
   for (const id of footstepPositions.keys())
     if (!present.has(id)) footstepPositions.delete(id);
 }
+// Drop ambient and footstep state when the current session ends.
 function stopTerrainAudio() {
   stopAmbientLoop('Water');
   footstepPositions.clear();
   nearestWater = null;
   nextWaterScan = 0;
 }
+// Mute existing loops immediately when the tab hides; frames restore levels on return.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     for (const loop of ambientLoops.values())

@@ -1,3 +1,4 @@
+// Cache the lobby and HUD elements once; render frames reuse these references.
 const form = document.querySelector('#lobby-form');
 const usernameInput = document.querySelector('#username');
 const gameIdInput = document.querySelector('#game-id');
@@ -26,6 +27,7 @@ const scoreboardBody = document.querySelector('#scoreboard-body');
 const roundLabel = document.querySelector('#round-label');
 const roundCountdown = document.querySelector('#round-countdown');
 
+// These dimensions match assets/maps/arena.txt and the server constants.
 const MAP_WIDTH = 4800;
 const MAP_HEIGHT = 1800;
 const camera = { x: 0, y: 0 };
@@ -50,6 +52,7 @@ let damageAnimation = null;
 let lastLocalHealth = null;
 let lastLocalRespawn = null;
 
+// Restart the one-second damage overlay instead of stacking animations.
 function showDamageFlash() {
   damageAnimation?.cancel();
   damageAnimation = damageFlash.animate([{ opacity: 1 }, { opacity: 0 }], {
@@ -58,6 +61,7 @@ function showDamageFlash() {
   });
 }
 
+// Prefer the clipboard API; selection keeps copying usable on plain-HTTP LAN sessions.
 copyGameIdButton.addEventListener('click', async () => {
   if (!joinedGameId.value) return;
   let copied = false;
@@ -152,6 +156,7 @@ function storeSnapshot(snapshot) {
       y: object.position.y,
     });
   }
+  // A new phase or round must not blend with positions from the previous one.
   const round = snapshot.round;
   if (
     latest &&
@@ -167,9 +172,9 @@ function storeSnapshot(snapshot) {
     clearTimeout(killAnnouncementTimer);
     document.querySelector('#kill-announcement').textContent = '';
   }
+  // Keep at most five frames, enough for the short interpolation delay.
   snapshots.push({
     serverTime: snapshot.timestamp_millis,
-    receivedAt,
     players,
     bullets,
     trains,
@@ -196,12 +201,13 @@ function interpolatedEntities(now, kind) {
       break;
     }
   }
+  // Clamp playback to known endpoints instead of guessing past the latest frame.
   const span = after.serverTime - before.serverTime;
   const fraction =
     span > 0
       ? Math.max(0, Math.min(1, (displayTime - before.serverTime) / span))
       : 0;
-  const players = [];
+  const entities = [];
   // Use the newest membership so joins and exits appear immediately.
   for (const [id, player] of currentSnapshot[kind]) {
     const start = before[kind].get(id);
@@ -211,7 +217,7 @@ function interpolatedEntities(now, kind) {
       // newest position first makes them jump backward when interpolation starts.
       if (!start || displayTime < before.serverTime) continue;
       if (!end) {
-        players.push(start);
+        entities.push(start);
         continue;
       }
     }
@@ -222,7 +228,8 @@ function interpolatedEntities(now, kind) {
         (start.respawn_count !== player.respawn_count ||
           end.respawn_count !== player.respawn_count))
     ) {
-      players.push(player);
+      // New players and respawns appear at their current position without a long slide.
+      entities.push(player);
       continue;
     }
     let x = start.x + (end.x - start.x) * fraction;
@@ -257,16 +264,18 @@ function interpolatedEntities(now, kind) {
         }
       }
     }
-    players.push({ ...player, x, y });
+    entities.push({ ...player, x, y });
   }
-  return players;
+  return entities;
 }
 
 // Draw at the display's refresh rate, independently of input and snapshot rates.
 function drawFrame(now) {
+  // The browser schedules the next frame; network callbacks only store new state.
   animationFrame = requestAnimationFrame(drawFrame);
   const latest = snapshots[snapshots.length - 1];
   if (!latest) return;
+  // Process changed HUD state once, while position interpolation continues every frame.
   if (latest.serverTime > lastProcessedSnapshotTimestamp) {
     currentSnapshot = latest;
     lastProcessedSnapshotTimestamp = latest.serverTime;
@@ -283,6 +292,7 @@ function drawFrame(now) {
       lastLocalRespawn = local.respawn_count;
     }
   }
+  // Count down against the server deadline, using the anchored server clock offset.
   const round = currentSnapshot.round;
   const intermission = Boolean(round?.intermission);
   board.classList.toggle('intermission', intermission);
@@ -305,9 +315,10 @@ function drawFrame(now) {
   // Even without a new snapshot, advance the interpolated position each frame.
   const players = interpolatedEntities(now, 'players');
   const trains = interpolatedEntities(now, 'trains');
-  renderPlayers(players, interpolatedEntities(now, 'bullets'), trains, [
+  renderArena(players, interpolatedEntities(now, 'bullets'), trains, [
     ...currentSnapshot.weapons.values(),
   ]);
+  // Sound sources follow the same displayed world positions as the sprites.
   updateTrainAudio(trains, displayedLocalPlayer);
   updateTerrainAudio(players, displayedLocalPlayer);
   if (fpsStartedAt === null) fpsStartedAt = now;
@@ -320,7 +331,9 @@ function drawFrame(now) {
   }
 }
 
+// Build the standings from authoritative kills/deaths, including the hitmen.
 function renderScoreboard(players) {
+  // Highest kills first; fewer deaths and then ID make ties stable.
   const ranked = [...players.values()].sort(
     (a, b) =>
       (b.kills ?? 0) - (a.kills ?? 0) ||
@@ -336,6 +349,7 @@ function renderScoreboard(players) {
       player.deaths ?? 0,
     ]) {
       const cell = document.createElement('td');
+      // Names are text, never HTML supplied by another player.
       cell.textContent = String(value);
       row.append(cell);
     }
@@ -344,6 +358,7 @@ function renderScoreboard(players) {
   scoreboardBody.replaceChildren(...rows);
 }
 
+// Clear the old session, animation, sounds, and HUD before leaving or joining again.
 function resetRendering() {
   if (animationFrame !== null) cancelAnimationFrame(animationFrame);
   animationFrame = null;
@@ -357,6 +372,7 @@ function resetRendering() {
   healthBar.value = 100;
   healthValue.textContent = '100 / 100';
   ammoValue.textContent = 'Ammo: —';
+  // Stop ambient nodes before dropping the positions that drive them.
   stopTrainAudio();
   stopTerrainAudio();
   damageAnimation?.cancel();
@@ -380,6 +396,7 @@ function resetRendering() {
   mouseFiring = false;
 }
 
+// Crop the weapon sheet and flip weapons whose source art points the other way.
 function drawWeaponSprite(sprite, weapon, x, y, width, height) {
   context.save();
   context.translate(x, y);
@@ -391,8 +408,10 @@ function drawWeaponSprite(sprite, weapon, x, y, width, height) {
   context.restore();
 }
 
-function renderPlayers(players, bullets, trains, weapons) {
+// Draw the HUD and camera view: ground, trains, pickups, bullets, then players.
+function renderArena(players, bullets, trains, weapons) {
   if (!context) return;
+  // Health and ammo come straight from snapshots; positions are interpolated separately.
   const authoritativePlayer = currentSnapshot?.players.get(localPlayerId);
   const health = Math.max(0, Math.min(100, authoritativePlayer?.health ?? 100));
   ammoValue.textContent = authoritativePlayer
@@ -407,11 +426,13 @@ function renderPlayers(players, bullets, trains, weapons) {
   renderMinimap(players, trains);
   displayedLocalPlayer =
     players.find((player) => player.player_id === localPlayerId) || null;
+  // Follow our player with a fixed world viewport, independent of CSS screen size.
   if (displayedLocalPlayer) {
     camera.x = displayedLocalPlayer.x - canvas.width / 2;
     camera.y = displayedLocalPlayer.y - canvas.height / 2;
     updateAim(displayedLocalPlayer);
   }
+  // Clear the viewport and draw only terrain tiles that can be on screen.
   context.fillStyle = '#191c17';
   context.fillRect(0, 0, canvas.width, canvas.height);
   for (
@@ -458,6 +479,7 @@ function renderPlayers(players, bullets, trains, weapons) {
   context.font = '12px monospace';
   context.textAlign = 'center';
 
+  // Trains are drawn from snapshots and rotated around their carriage centers.
   for (const train of trains) {
     const trainSprite = assetImages.get(
       train.carriage_index > 0
@@ -487,6 +509,7 @@ function renderPlayers(players, bullets, trains, weapons) {
     context.restore();
   }
 
+  // Ground guns use server wall-clock expiry, matching the border countdown.
   const serverNow = performance.now() + serverClockOffset;
   for (const pickup of weapons) {
     if (pickup.expires_at_millis <= serverNow) continue;
@@ -510,6 +533,7 @@ function renderPlayers(players, bullets, trains, weapons) {
     drawPickupTimer(x, y, progress);
   }
 
+  // Bullet angle is its travel direction, including momentum inherited at launch.
   for (const bullet of bullets) {
     const x = bullet.x - camera.x;
     const y = bullet.y - camera.y;
@@ -525,6 +549,7 @@ function renderPlayers(players, bullets, trains, weapons) {
   }
 
   playerCount.textContent = `${players.length} ${players.length === 1 ? 'player' : 'players'}`;
+  // Draw each character and its independently aimed gun, then the name label.
   for (const player of players) {
     const x = player.x - camera.x;
     const y = player.y - camera.y;
@@ -560,6 +585,7 @@ function renderPlayers(players, bullets, trains, weapons) {
   }
 }
 
+// Fill the square border over the pickup lifetime; the server removes expired guns.
 function drawPickupTimer(x, y, progress) {
   const size = 44;
   context.strokeStyle = '#75664a';
@@ -589,6 +615,7 @@ function drawPickupTimer(x, y, progress) {
   context.stroke();
 }
 
+// Project world positions onto the small radar without terrain or camera offsets.
 function renderMinimap(players, trains) {
   minimapContext.fillStyle = '#10180f';
   minimapContext.fillRect(0, 0, minimap.width, minimap.height);
@@ -635,6 +662,7 @@ const gameKeys = new Set([
   'ShiftRight',
 ]);
 
+// Stop sending input and forget held controls when this connection ends.
 function stopInput() {
   clearInterval(inputTimer);
   inputTimer = null;
@@ -673,6 +701,7 @@ function sendInput() {
   socket.send(encodeClientMessage(message));
 }
 
+// Record held keys; fire presses are also sent immediately to preserve quick taps.
 window.addEventListener('keydown', (event) => {
   if (
     localPlayerId === null ||
@@ -692,6 +721,7 @@ window.addEventListener('keydown', (event) => {
   pressedKeys.add(event.code);
   if (event.code === 'KeyF' && !event.repeat) sendInput();
 });
+// Releases remove intent even when focus has moved onto a UI control.
 window.addEventListener('keyup', (event) => {
   pressedKeys.delete(event.code);
   if (event.code === 'KeyF') sendInput();
@@ -708,20 +738,24 @@ window.addEventListener('keyup', (event) => {
   }
 });
 
+// Send a released state when focus is lost, so movement/fire do not stay held.
 function releaseKeys() {
   pressedKeys.clear();
   mouseFiring = false;
   sendInput();
 }
 
+// Remember page coordinates; updateAim applies scaling and the camera offset.
 canvas.addEventListener('mousemove', (event) => {
   if (localPlayerId === null || leavingGame) return;
   mousePosition = { x: event.clientX, y: event.clientY };
   updateAim(displayedLocalPlayer);
 });
+// A user gesture can unlock browser audio before the first firing event arrives.
 canvas.addEventListener('pointerdown', () => {
   if (localPlayerId !== null) unlockAudio();
 });
+// Only left-click inside the arena starts firing; focus keeps keyboard controls there.
 canvas.addEventListener('mousedown', (event) => {
   if (event.button !== 0 || localPlayerId === null || leavingGame) return;
   event.preventDefault();
@@ -731,6 +765,7 @@ canvas.addEventListener('mousedown', (event) => {
   updateAim(displayedLocalPlayer);
   sendInput();
 });
+// Listen on the window so releasing outside the canvas still stops firing.
 window.addEventListener('mouseup', (event) => {
   if (event.button !== 0) return;
   const wasFiring = mouseFiring;
@@ -738,11 +773,13 @@ window.addEventListener('mouseup', (event) => {
   if (wasFiring) sendInput();
 });
 
+// Clear input when switching windows or hiding the tab.
 window.addEventListener('blur', releaseKeys);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) releaseKeys();
 });
 
+// Tell the game we are leaving, stop local loops, and close this connection.
 exitButton.addEventListener('click', () => {
   if (!socket || socket.readyState !== WebSocket.OPEN || localPlayerId === null)
     return;
@@ -764,15 +801,19 @@ exitButton.addEventListener('click', () => {
   socket.close();
 });
 
+// Disable lobby controls while an asset load or connection attempt is in progress.
 function setBusy(busy) {
   createButton.disabled = busy;
   joinButton.disabled = busy;
   usernameInput.disabled = busy;
   gameIdInput.disabled = busy;
   document.querySelector('#character-picker').disabled = busy;
+  document.querySelector('#bot-settings').disabled = busy;
 }
 
-/** @param {string | null} gameId */
+/** Create or join a room after validating the form and loading its assets.
+ * @param {string | null} gameId
+ */
 async function joinGame(gameId) {
   usernameInput.value = usernameInput.value.trim();
   if (!usernameInput.reportValidity()) return;
@@ -783,6 +824,18 @@ async function joinGame(gameId) {
     return;
   }
 
+  const botCountInput = document.querySelector('#bot-count');
+  if (gameId === null && !botCountInput.reportValidity()) return;
+  // Freeze creation settings before connecting; joining never overrides a room.
+  const botSettings =
+    gameId === null
+      ? {
+          bot_count: Number(botCountInput.value),
+          bot_difficulty: Number(
+            document.querySelector('#bot-difficulty').value,
+          ),
+        }
+      : {};
   unlockAudio();
   const characterType = form.querySelector(
     'input[name="character_type"]:checked',
@@ -808,6 +861,7 @@ async function joinGame(gameId) {
   socket = connection;
   let welcomed = false;
   let failed = false;
+  // Require Welcome within ten seconds; opening a socket alone is not a successful join.
   const timeout = setTimeout(() => {
     failed = true;
     status.textContent =
@@ -815,6 +869,7 @@ async function joinGame(gameId) {
     connection.close();
   }, 10000);
 
+  // Once the WebSocket opens, send exactly one join request for this attempt.
   connection.addEventListener('open', () => {
     status.textContent = gameId === null ? 'Creating game…' : 'Joining game…';
     /** @type {import('./protocol.js').ClientMessage} */
@@ -825,11 +880,13 @@ async function joinGame(gameId) {
         username: usernameInput.value,
         character_type: characterType,
         game_id: gameId,
+        ...botSettings,
       },
     };
     connection.send(encodeClientMessage(message));
   });
 
+  // Discrete events update effects; snapshots update the bounded render history.
   connection.addEventListener('message', (event) => {
     let message;
     try {
@@ -841,10 +898,11 @@ async function joinGame(gameId) {
       connection.close();
       return;
     }
-    if (message && typeof message === 'object' && message.PlayerKilled) {
+    // Death announcements and audio use the server names and the old death position.
+    if (message.PlayerKilled) {
       const kill = message.PlayerKilled;
       if (welcomed && !leavingGame && kill.game_id === joinedGameId.value) {
-        playWeaponSound(
+        playSound(
           'PlayerDeath',
           kill.position,
           displayedLocalPlayer || currentSnapshot?.players.get(localPlayerId),
@@ -866,6 +924,7 @@ async function joinGame(gameId) {
         }, 5000);
       }
     }
+    // An application error ends this attempt and lets the user try again.
     if (message.Error) {
       failed = true;
       status.textContent = `Server: ${message.Error.code}`;
@@ -887,25 +946,25 @@ async function joinGame(gameId) {
       !leavingGame &&
       message.TrainWhistle.game_id === joinedGameId.value
     ) {
-      playWeaponSound(
+      playSound(
         'TrainWhistle',
         message.TrainWhistle.position,
         displayedLocalPlayer || currentSnapshot?.players.get(localPlayerId),
         0.6,
       );
     }
-    // Welcome confirms a successful join.
-    if (message && typeof message === 'object' && message.GunFired) {
+    if (message.GunFired) {
       const shot = message.GunFired;
       if (welcomed && !leavingGame && shot.game_id === joinedGameId.value) {
-        playWeaponSound(
+        playSound(
           shot.weapon_type,
           shot.position,
           displayedLocalPlayer || currentSnapshot?.players.get(localPlayerId),
         );
       }
     }
-    if (message && typeof message === 'object' && message.Welcome) {
+    // Welcome assigns our identity; input may start only after this reply.
+    if (message.Welcome) {
       clearTimeout(timeout);
       welcomed = true;
       localPlayerId = message.Welcome.player_id;
@@ -918,7 +977,8 @@ async function joinGame(gameId) {
       stopInput();
       inputTimer = setInterval(sendInput, 30);
     }
-    if (message && typeof message === 'object' && message.StateSnapshot) {
+    // Render only frames belonging to the successfully joined game.
+    if (message.StateSnapshot) {
       const snapshot = message.StateSnapshot;
       if (!welcomed || leavingGame || snapshot.game_id !== joinedGameId.value)
         return;
@@ -931,12 +991,14 @@ async function joinGame(gameId) {
     }
   });
 
+  // Surface connection failures in the lobby instead of leaving disabled controls.
   connection.addEventListener('error', () => {
     failed = true;
     status.textContent =
       'Could not connect. Start the Rust server on port 8000.';
   });
 
+  // Restore the lobby for both voluntary exits and unexpected disconnects.
   connection.addEventListener('close', () => {
     clearTimeout(timeout);
     stopInput();
@@ -958,6 +1020,7 @@ async function joinGame(gameId) {
   });
 }
 
+// Both lobby buttons and Enter share the same validated join flow.
 createButton.addEventListener('click', () => joinGame(null));
 joinButton.addEventListener('click', () => joinGame(gameIdInput.value.trim()));
 gameIdInput.addEventListener('input', () => gameIdInput.setCustomValidity(''));

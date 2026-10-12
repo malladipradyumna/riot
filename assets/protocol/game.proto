@@ -13,6 +13,7 @@ enum CharacterType {
   Cyan = 6;
   Survivor = 7;
   Zombie = 8;
+  Villain = 9; // Reserved for server-controlled bots.
 }
 
 enum WeaponType {
@@ -20,7 +21,8 @@ enum WeaponType {
   DesertEagle = 1;
   Ak47 = 2;
   RocketLauncher = 3;
-  Flamethrower = 4;
+  reserved 4;
+  reserved "Flamethrower";
 }
 
 message Position {
@@ -35,6 +37,9 @@ message JoinGame {
   string username = 3;
   CharacterType character_type = 4;
   optional string game_id = 5;
+  // Creation settings only; joining keeps the existing room settings.
+  optional uint32 bot_count = 6;
+  optional uint32 bot_difficulty = 7;
 }
 
 message ExitGame {
@@ -103,11 +108,6 @@ message Weapon {
   uint64 lifetime_millis = 3;
 }
 
-message Boundary {
-  float width = 1;
-  float height = 2;
-}
-
 message Train {
   float aim_angle = 1;
   float width = 2;
@@ -117,14 +117,16 @@ message Train {
   uint32 corner_count = 6;
 }
 
+// Deleted fields stay reserved so older wire IDs never acquire a new meaning.
 message ObjectState {
+  reserved 6;
+  reserved "boundary";
   uint64 entity_id = 1;
   Position position = 2;
   oneof object {
     Player player = 3;
     Bullet bullet = 4;
     Weapon weapon = 5;
-    Boundary boundary = 6;
     Train train = 7;
   }
 }
@@ -171,24 +173,6 @@ message PlayerKilled {
   Position position = 7;
 }
 
-message PlayerDied {
-  string server_request_id = 1;
-  uint64 timestamp_millis = 2;
-  uint64 player_id = 3;
-  string game_id = 4;
-  string last_processed_client_request_id = 5;
-  uint64 dead_player_id = 6;
-}
-
-message PlayerLeft {
-  string server_request_id = 1;
-  uint64 timestamp_millis = 2;
-  uint64 player_id = 3;
-  string game_id = 4;
-  string last_processed_client_request_id = 5;
-  uint64 abandoned_player_id = 6;
-}
-
 message PlayerDamaged {
   string game_id = 1;
   uint64 player_id = 2;
@@ -205,19 +189,15 @@ message Error {
   string code = 1;
 }
 
-message Pong {
-}
-
 message ServerEnvelope {
+  reserved 6, 7, 8;
+  reserved "player_died", "player_left", "pong";
   oneof payload {
     Welcome welcome = 1;
     StateSnapshot state_snapshot = 2;
     GunFired gun_fired = 3;
     PlayerKilled player_killed = 4;
     Error error = 5;
-    PlayerDied player_died = 6;
-    PlayerLeft player_left = 7;
-    Pong pong = 8;
     TrainWhistle train_whistle = 9;
     PlayerDamaged player_damaged = 10;
   }

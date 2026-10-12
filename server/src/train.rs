@@ -1,9 +1,10 @@
 use crate::{
-    components::{ObjectId, PLAYER_RADIUS},
+    components::{Ammo, Health, ObjectId, PLAYER_RADIUS},
     constants::{TICK_DURATION, TRAIN_HEIGHT, TRAIN_SPEED, TRAIN_WIDTH},
-    types::{EntityId, PlayerId, Position},
+    types::{EntityId, PlayerId, Position, WeaponType},
 };
 
+// Track bounds are world coordinates through the centers of the railway tiles.
 pub const LEFT: f32 = 625.0;
 pub const RIGHT: f32 = 4225.0;
 pub const TOP: f32 = 325.0;
@@ -20,6 +21,7 @@ pub struct Train {
 pub fn route(distance: f32) -> (Position, f32) {
     let width = RIGHT - LEFT;
     let height = BOTTOM - TOP;
+    // Negative carriage offsets wrap behind the locomotive on the same lap.
     let distance = distance.rem_euclid(2.0 * (width + height));
     if distance < width {
         (
@@ -55,6 +57,7 @@ pub fn route(distance: f32) -> (Position, f32) {
         )
     }
 }
+// Place four carriages at equal distances along the same closed track.
 pub fn spawn(world: &mut hecs::World, id: EntityId) {
     for index in 0..crate::constants::TRAIN_CARRIAGES {
         let distance = -(index as f32) * crate::constants::TRAIN_CARRIAGE_SPACING;
@@ -72,6 +75,7 @@ pub fn spawn(world: &mut hecs::World, id: EntityId) {
     }
 }
 
+// Rotate a world point into carriage coordinates for boarding and transport.
 fn local(point: Position, center: Position, angle: f32) -> (f32, f32) {
     let dx = point.x - center.x;
     let dy = point.y - center.y;
@@ -80,10 +84,12 @@ fn local(point: Position, center: Position, angle: f32) -> (f32, f32) {
         -dx * angle.sin() + dy * angle.cos(),
     )
 }
+// Require the whole player circle to fit on the rotated carriage.
 pub fn aboard(point: Position, center: Position, angle: f32) -> bool {
     let (x, y) = local(point, center, angle);
     x.abs() <= TRAIN_WIDTH / 2.0 - PLAYER_RADIUS && y.abs() <= TRAIN_HEIGHT / 2.0 - PLAYER_RADIUS
 }
+// Copy carriage positions and angles so player queries can run separately.
 pub fn platforms(world: &hecs::World) -> Vec<(Position, f32)> {
     world
         .query::<(&Position, &Train)>()
@@ -91,6 +97,7 @@ pub fn platforms(world: &hecs::World) -> Vec<(Position, f32)> {
         .map(|(position, train)| (*position, train.angle))
         .collect()
 }
+// Advance carriages, carry riders around corners, and report a locomotive whistle.
 pub fn tick(world: &mut hecs::World) -> Option<Position> {
     let mut whistle = None;
     let mut movement = Vec::new();
@@ -106,6 +113,7 @@ pub fn tick(world: &mut hecs::World) -> Option<Position> {
         }
         movement.push((old, angle, *position, train.angle));
     }
+    // Keep each rider's local offset while the carriage translates and rotates.
     for (_, position) in world.query_mut::<(&PlayerId, &mut Position)>() {
         for (old, angle, next, next_angle) in &movement {
             if aboard(*position, *old, *angle) {
@@ -127,11 +135,12 @@ pub fn tick(world: &mut hecs::World) -> Option<Position> {
 // Called once per simulation tick, after movement, never once per carriage.
 pub fn replenish(world: &mut hecs::World) {
     let carriages = platforms(world);
-    for (position, health, ammo, weapon) in world.query_mut::<(
+    for (position, health, ammo, weapon, bot) in world.query_mut::<(
         &Position,
-        &mut crate::components::Health,
-        &mut crate::components::Ammo,
-        &crate::types::WeaponType,
+        &mut Health,
+        &mut Ammo,
+        &WeaponType,
+        Option<&crate::bot::Bot>,
     )>() {
         if carriages
             .iter()
@@ -139,8 +148,11 @@ pub fn replenish(world: &mut hecs::World) {
         {
             health.0 = (health.0 + crate::constants::TRAIN_HEAL_PER_SECOND * TICK_DURATION)
                 .min(crate::constants::MAX_HEALTH);
-            ammo.0 = (ammo.0 + crate::constants::TRAIN_AMMO_PER_SECOND * TICK_DURATION)
-                .min(crate::constants::ammo_capacity(*weapon) as f32);
+            // Bots get ammunition from ground guns only.
+            if bot.is_none() {
+                ammo.0 = (ammo.0 + crate::constants::TRAIN_AMMO_PER_SECOND * TICK_DURATION)
+                    .min(crate::constants::ammo_capacity(*weapon) as f32);
+            }
         }
     }
 }

@@ -13,15 +13,15 @@
  *   | 'Olive'
  *   | 'Cyan'
  *   | 'Survivor'
- *   | 'Zombie'} CharacterType
+ *   | 'Zombie'
+ *   | 'Villain'} CharacterType
  */
 
 /**
  * @typedef {'Pistol'
  *   | 'DesertEagle'
  *   | 'Ak47'
- *   | 'RocketLauncher'
- *   | 'Flamethrower'} WeaponType
+ *   | 'RocketLauncher'} WeaponType
  */
 
 /**
@@ -72,17 +72,10 @@
  */
 
 /**
- * @typedef {Object} BoundaryState
- * @property {number} width
- * @property {number} height
- */
-
-/**
  * @typedef {{ Player: PlayerState }
  *   | { Bullet: BulletState }
  *   | { Weapon: WeaponState }
- *   | { Train: TrainState }
- *   | { Boundary: BoundaryState }} GameObject
+ *   | { Train: TrainState }} GameObject
  */
 
 /**
