@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+// These IDs go over the wire. hecs::Entity stays inside the server's world.
 pub type PlayerId = u64;
 pub type GameId = String;
 pub type EntityId = u64;

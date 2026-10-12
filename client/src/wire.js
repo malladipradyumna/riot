@@ -14,6 +14,7 @@ const protocolReady = fetch('assets/protocol/game.proto')
     return false;
   });
 
+// Keep protobuf field names at this boundary; the rest of the client uses message names.
 function encodeClientMessage(message) {
   const fields = {
     JoinGame: 'join_game',

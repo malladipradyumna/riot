@@ -139,6 +139,7 @@ const SOUND_ASSETS = {
   GrassStep: { sound: 'assets/terrain/grass-step.wav' },
 };
 
+// Browsers require a user gesture before audio can start; joining calls this.
 function unlockAudio() {
   const Context = window.AudioContext || window.webkitAudioContext;
   if (!Context) return;
@@ -161,6 +162,7 @@ function unlockAudio() {
   }
 }
 
+// Each sound has a world position: distance sets volume, left/right sets pan.
 function soundLevels(source, listener, range = 450) {
   if (!source || !listener) return { volume: 0, pan: 0 };
   const distance = Math.hypot(source.x - listener.x, source.y - listener.y);

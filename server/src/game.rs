@@ -23,6 +23,7 @@ use crate::components::{
     Shooting, Velocity,
 };
 
+// The manager is a directory of games; each game task owns its own world.
 pub struct GameManager {
     game_senders: HashMap<GameId, GameHandle>,
 }
@@ -66,6 +67,7 @@ impl GameManager {
     }
 }
 
+// Only run() and the methods it calls touch this state, so the world needs no mutex.
 struct Game {
     id: GameId,
     receiver: mpsc::Receiver<GameMessage>,
@@ -82,7 +84,6 @@ struct Game {
 
 impl Game {
     async fn run(mut self, manager: Arc<Mutex<GameManager>>) {
-        let mut game_metrics = crate::metrics::get().game();
         crate::train::spawn(&mut self.world, self.next_entity_id);
         self.next_entity_id += crate::constants::TRAIN_CARRIAGES;
         for _ in 0..crate::constants::INITIAL_WEAPON_PICKUPS {
@@ -95,6 +96,7 @@ impl Game {
             Duration::from_secs(10),
         );
         let mut simulation = time::interval(Duration::from_secs_f32(TICK_DURATION));
+        // Skip missed ticks rather than piling up simulation work after a stall.
         simulation.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
         let mut snapshots = time::interval(Duration::from_secs_f64(1.0 / SNAPSHOT_RATE as f64));
         snapshots.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
@@ -119,9 +121,8 @@ impl Game {
                         empty_since = None;
                     }
                 }
-                scheduled = simulation.tick(), if !self.intermission => {
-                    crate::metrics::get().simulation_delay.observe(scheduled.elapsed().as_secs_f64());
-                    let started = std::time::Instant::now();
+                _ = simulation.tick(), if !self.intermission => {
+                    // Capture positions before both train transport and walking for bullet momentum.
                     for (_, position, previous) in self.world.query_mut::<(&PlayerId, &Position, &mut crate::components::PreviousPosition)>() { previous.0 = *position; }
                     if let Some(position) = crate::train::tick(&mut self.world) {
                         for player in self.players.values() {
@@ -133,7 +134,6 @@ impl Game {
                     crate::train::replenish(&mut self.world);
                     self.fire_bullets();
                     self.move_bullets();
-                    crate::metrics::get().simulation_duration.observe(started.elapsed().as_secs_f64());
                 },
                 _ = snapshots.tick() => self.send_player_snapshots(),
                 _ = pickups.tick(), if !self.intermission => self.spawn_weapon_pickup(),
@@ -164,7 +164,6 @@ impl Game {
                     }
                 }
             }
-            game_metrics.update_players(self.players.len());
         }
         manager.lock().unwrap().remove_game(&self.id);
     }
@@ -236,7 +235,6 @@ impl Game {
                 fire.pending_shot |= *shooting && !fire.held;
                 fire.held = *shooting;
                 player.last_processed_request_id = client_request_id.clone();
-                crate::metrics::get().inputs_processed.inc();
             }
             return;
         }
@@ -301,6 +299,7 @@ impl Game {
         }
     }
 
+    // Keep connections and weapons across rounds, but start scores and health afresh.
     fn advance_round(&mut self) {
         self.intermission = !self.intermission;
         self.round_deadline = time::Instant::now()
@@ -361,7 +360,6 @@ impl Game {
     }
 
     fn send_player_snapshots(&mut self) {
-        let snapshot_timer = crate::metrics::get().snapshot_duration.start_timer();
         // Build one owned snapshot; the watch channel retains only the latest encoded frame.
         let platforms = crate::train::platforms(&self.world);
         let mut objects = Vec::with_capacity(self.players.len());
@@ -499,9 +497,7 @@ impl Game {
             acknowledgements,
             round,
         );
-        crate::metrics::get().snapshots.inc();
         self.snapshot_sender.send_replace(Some(encoded));
-        snapshot_timer.observe_duration();
     }
 
     fn move_players(&mut self) {
@@ -911,6 +907,7 @@ fn random_spawn_position() -> Position {
     }
 }
 
+// PlayerId looks up this record; entity points to the player's ECS components.
 struct Player {
     entity: hecs::Entity,
     last_processed_request_id: String,
@@ -922,6 +919,7 @@ pub struct GameMessage {
     pub sender_to_client: mpsc::Sender<ServerMessage>,
 }
 
+// Commands queue in mpsc. Snapshots use watch so slow clients get the latest frame.
 #[derive(Clone)]
 pub struct GameHandle {
     pub sender: mpsc::Sender<GameMessage>,

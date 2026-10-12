@@ -18,6 +18,7 @@ pub struct Collider(pub f32);
 #[derive(Default)]
 pub struct Shooting {
     pub held: bool,
+    // Remember a quick press even if the release arrives before the next tick.
     pub pending_shot: bool,
     pub cooldown: f32,
 }

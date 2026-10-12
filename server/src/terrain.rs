@@ -2,6 +2,7 @@ use crate::types::Position;
 use std::sync::OnceLock;
 
 pub const TILE_SIZE: f32 = 50.0;
+// All games share the same read-only map. Load it once, not once per game.
 static MAP: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
 
 pub fn load() -> &'static Vec<Vec<u8>> {

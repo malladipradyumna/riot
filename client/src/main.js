@@ -30,6 +30,7 @@ const MAP_WIDTH = 4800;
 const MAP_HEIGHT = 1800;
 const camera = { x: 0, y: 0 };
 let localPlayerId = null;
+// The socket fills this small history; drawing reads it on the same browser thread.
 const snapshots = [];
 const MAX_SNAPSHOTS = 5;
 const INTERPOLATION_DELAY_MS = 100;
@@ -80,6 +81,7 @@ copyGameIdButton.addEventListener('click', async () => {
   }, 1500);
 });
 
+// Mouse coordinates are on the page; aiming needs coordinates in the game world.
 function updateAim(player) {
   if (!player) return;
   let targetX = camera.x + canvas.width / 2;
@@ -102,6 +104,7 @@ function updateAim(player) {
   else if (aimAngle === null) aimAngle = 0;
 }
 
+// Ignore old frames so a delayed message cannot rewind the game.
 function storeSnapshot(snapshot) {
   const latest = snapshots[snapshots.length - 1];
   if (!Number.isFinite(snapshot.timestamp_millis)) return;
@@ -179,6 +182,7 @@ function storeSnapshot(snapshot) {
     serverClockOffset = snapshot.timestamp_millis - receivedAt;
 }
 
+// Draw slightly behind the server to interpolate between known positions.
 function interpolatedEntities(now, kind) {
   const displayTime = now + serverClockOffset - INTERPOLATION_DELAY_MS;
   let before = snapshots[0];
@@ -258,6 +262,7 @@ function interpolatedEntities(now, kind) {
   return players;
 }
 
+// Draw at the display's refresh rate, independently of input and snapshot rates.
 function drawFrame(now) {
   animationFrame = requestAnimationFrame(drawFrame);
   const latest = snapshots[snapshots.length - 1];
@@ -637,6 +642,7 @@ function stopInput() {
   mouseFiring = false;
 }
 
+// Send held keys, not movement distances. The server decides how far we move.
 function sendInput() {
   if (
     !socket ||

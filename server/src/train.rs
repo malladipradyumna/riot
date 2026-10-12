@@ -8,6 +8,7 @@ pub const LEFT: f32 = 625.0;
 pub const RIGHT: f32 = 4225.0;
 pub const TOP: f32 = 325.0;
 pub const BOTTOM: f32 = 1525.0;
+
 pub struct Train {
     pub distance: f32,
     pub angle: f32,
@@ -15,6 +16,7 @@ pub struct Train {
     pub corner_count: u32,
 }
 
+// Distance wraps around one clockwise lap; carriage spacing uses the same route.
 pub fn route(distance: f32) -> (Position, f32) {
     let width = RIGHT - LEFT;
     let height = BOTTOM - TOP;

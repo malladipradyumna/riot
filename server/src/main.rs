@@ -13,12 +13,12 @@ use crate::game::{GameHandle, GameManager, GameMessage};
 
 const ADDRESS: &str = "0.0.0.0:8000";
 
+mod bot;
 mod codec;
 mod collision;
 mod components;
 mod constants;
 mod game;
-mod metrics;
 mod protocol;
 mod terrain;
 mod train;
@@ -44,31 +44,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_ansi(false)
         .init();
     terrain::load();
-    tracing::info!(
-        workers = tokio::runtime::Handle::current().metrics().num_workers(),
-        "Tokio runtime started"
-    );
+    bot::initialize()?;
+    tracing::info!("Tokio runtime started");
     let address = std::env::var("RIOT_ADDRESS").unwrap_or_else(|_| ADDRESS.to_owned());
     let listener = TcpListener::bind(&address).await?;
-    metrics::get()
-        .workers
-        .set(tokio::runtime::Handle::current().metrics().num_workers() as i64);
-    let metrics_address =
-        std::env::var("RIOT_METRICS_ADDRESS").unwrap_or_else(|_| "127.0.0.1:9000".into());
-    let metrics_listener = TcpListener::bind(&metrics_address).await?;
-    let mut metrics_task =
-        tokio::spawn(async move { axum::serve(metrics_listener, metrics::router()).await });
-    tracing::info!("Metrics and health endpoints listening on {metrics_address}");
     tracing::info!("RIOT WebSocket server listening on {address}");
     let game_manager = Arc::new(Mutex::new(GameManager::new()));
 
     loop {
         let accepted = tokio::select! {
             result = listener.accept() => result,
-            result = &mut metrics_task => {
-                result??;
-                return Err(std::io::Error::other("Metrics HTTP server stopped").into());
-            },
             _ = tokio::signal::ctrl_c() => { tracing::info!("Server shutting down"); break; }
         };
         let (stream, addr) = match accepted {
@@ -82,24 +67,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tracing::debug!("WebSocket connection from {addr}");
         tokio::spawn(async move {
             if let Err(error) = handle_client(stream, manager).await {
-                metrics::get().connection_errors.inc();
                 tracing::warn!("Connection to {addr} ended with an error: {error}");
             }
         });
     }
-    metrics_task.abort();
     Ok(())
 }
 
+// One task owns each socket. The game talks back through channels, not socket borrows.
 async fn handle_client(
     stream: TcpStream,
     game_manager: Arc<Mutex<GameManager>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut websocket = accept_async(stream).await?;
-    let _connection_metric = metrics::get().connection();
     tracing::debug!("WebSocket handshake completed");
     let (sender_to_client, mut receiver_from_server) = mpsc::channel::<ServerMessage>(64);
     let mut sender_to_game: Option<GameHandle> = None;
+    // A snapshot is only useful after Welcome tells the client which player is theirs.
     let mut welcomed = false;
 
     loop {
@@ -108,26 +92,19 @@ async fn handle_client(
                 let Some(message) = message else { break };
                 match message? {
                     Message::Binary(data) => {
-                        metrics::get().messages_received.inc();
-                        metrics::get().bytes_received.inc_by(data.len() as u64);
                         let client_message = match codec::decode_client(&data) {
                             Ok(message) => message,
                             Err(code) => {
-                                metrics::get().protocol_errors.inc();
                                 send_application(&mut websocket, codec::error(code)).await?;
                                 continue;
                             }
                         };
                         tracing::trace!(?client_message, "Received client message");
                         if let Err(error) = handle_client_msg(client_message, &game_manager, &mut sender_to_game, &sender_to_client).await {
-                            metrics::get().protocol_errors.inc();
                             send_application(&mut websocket, codec::error(&error)).await?;
                         }
                     }
-                    Message::Text(text) => {
-                        metrics::get().messages_received.inc();
-                        metrics::get().bytes_received.inc_by(text.len() as u64);
-                        metrics::get().protocol_errors.inc();
+                    Message::Text(_) => {
                         send_application(&mut websocket, codec::error("BINARY_REQUIRED")).await?;
                     },
                     Message::Ping(data) => websocket.send(Message::Pong(data)).await?,
@@ -144,7 +121,6 @@ async fn handle_client(
                 let bytes = sender_to_game.as_mut().unwrap().snapshots.borrow_and_update().clone();
                 if let Some(bytes) = bytes {
                     send_application(&mut websocket, bytes).await?;
-                    metrics::get().snapshot_deliveries.inc();
                 }
             }
             Some(message) = receiver_from_server.recv() => {
@@ -161,10 +137,7 @@ async fn send_application(
     websocket: &mut WebSocketStream<TcpStream>,
     bytes: bytes::Bytes,
 ) -> Result<(), tokio_tungstenite::tungstenite::Error> {
-    let length = bytes.len();
     websocket.send(Message::Binary(bytes)).await?;
-    metrics::get().messages_sent.inc();
-    metrics::get().bytes_sent.inc_by(length as u64);
     Ok(())
 }
 
@@ -189,6 +162,7 @@ async fn handle_client_msg(
         *sender_to_game = Some(sender);
     }
 
+    // Keep the handle after joining; normal input does not need the manager lock.
     let sender = sender_to_game.as_ref().ok_or("JOIN_GAME_FIRST")?;
     sender
         .sender

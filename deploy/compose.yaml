@@ -14,12 +14,12 @@ services:
     restart: unless-stopped
     environment:
       RUST_LOG: ${RUST_LOG:-info}
-    ports:
-      - "127.0.0.1:9000:9000"
     init: true
     stop_signal: SIGINT
     stop_grace_period: 15s
     read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     ulimits:
@@ -43,7 +43,7 @@ services:
       - caddy-config:/config
     depends_on:
       server:
-        condition: service_healthy
+        condition: service_started
     logging: *logging
 
 volumes:

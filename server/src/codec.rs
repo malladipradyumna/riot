@@ -5,6 +5,7 @@ use crate::{
 use bytes::Bytes;
 use prost::Message;
 
+// Translate protobuf messages here so gameplay code can use our own Rust types.
 pub fn decode_client(data: &[u8]) -> Result<ClientMessage, &'static str> {
     use wire::client_envelope::Payload;
     let message = wire::ClientEnvelope::decode(data).map_err(|_| "CORRUPT_MSG")?;

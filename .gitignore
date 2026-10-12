@@ -3,6 +3,7 @@ server/target/
 deploy/.env
 **/__pycache__/
 tools/
+bot-paths/
 
 # Local credentials and machine configuration
 .aws/

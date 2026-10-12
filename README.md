@@ -4,7 +4,7 @@ A browser multiplayer shooter with a Rust authoritative server, Protobuf WebSock
 
 ## Features
 
-- Create or join a game by ID and choose one of three characters.
+- Create or join a game by ID and choose one of nine characters.
 - Start with a pistol; walk over randomly spawned guns to equip them.
 - Ground guns expire after 30 seconds, shown by a filling square border.
 - Server-owned movement, bullets, damage, respawning, kills, and deaths.
@@ -14,7 +14,6 @@ A browser multiplayer shooter with a Rust authoritative server, Protobuf WebSock
 - Damage flashes, a health bar that is green aboard the train and red outside, and one-click game-ID copying.
 - Terrain-dependent movement, river crossings, tunnels, and cover.
 - Smooth canvas rendering, a player-following camera, radar, and scoreboard.
-- Native host monitoring with VictoriaMetrics and Node Exporter.
 
 ## Requirements
 
@@ -44,19 +43,28 @@ When switching from Docker, stop its containers first:
 sudo env RIOT_SITE=http://localhost docker compose -f deploy/compose.yaml down
 ```
 
-The server listens on port 8000. Its metrics and health endpoints are http://127.0.0.1:9000/metrics and http://127.0.0.1:9000/healthz.
+The server listens for WebSocket connections on port 8000.
+
+At startup, `server/src/bot.rs` runs Dijkstra from every walkable tile and keeps
+a next-step table in memory. Costs use terrain walking speeds, with four-way
+movement and walls blocked. This is static navigation between tile centers;
+train rides, sprinting, and moving players are not part of the route costs.
+Five randomly selected long routes are written to `bot-paths/path-1.txt` through
+`path-5.txt` in the working directory, using the original map symbols with `p`
+marking each path. Set `RIOT_BOT_PATHS_DIR` to change the output directory.
+Docker writes these previews to `/tmp/bot-paths` inside the server container.
 
 ## Deploy on OCI Ampere
 
-See [the deployment guide](deploy/README.md). The game and Caddy run in Docker; Node Exporter and VictoriaMetrics run as native host services. The installer supports Ubuntu/Debian and Oracle Linux/RHEL on ARM64 or AMD64.
+See [the deployment guide](deploy/README.md). The game server and Caddy run in Docker. The installer supports Ubuntu/Debian and Oracle Linux/RHEL on ARM64 or AMD64.
 
-Game state is in memory and resets when the game server restarts. Metrics persist on the host with seven-day retention. View VMUI locally through the SSH tunnel described in the deployment guide.
+Game state is in memory and resets when the game server restarts.
 
 Assets and their license notes are in [assets/README.md](assets/README.md). The shared wire schema is [assets/protocol/game.proto](assets/protocol/game.proto). Keep private SSH keys and local deployment configuration outside version control.
 
 ## Local Docker deployment
 
-Stop the native Rust server first to free port 9000, then run:
+Run:
 
 ```bash
 sudo env RIOT_SITE=http://localhost docker compose -f deploy/compose.yaml up -d --build
@@ -73,10 +81,10 @@ sudo env RIOT_SITE=http://localhost docker compose -f deploy/compose.yaml logs -
 
 | Path | Contents |
 | --- | --- |
-| `server/` | Rust game simulation, WebSocket server, and metrics endpoint |
+| `server/` | Rust game simulation and WebSocket server |
 | `client/` | Browser HTML, CSS, and JavaScript |
 | `assets/` | Shared map, protocol schema, sprites, and sounds |
-| `deploy/` | Dockerfiles, Caddy, host installer, and optional Grafana dashboard |
+| `deploy/` | Dockerfiles, Caddy, and Docker host installer |
 | `docs/` | Design notes |
 
 Edit the map using [its terrain guide](assets/maps/README.md). Restart the server and refresh the browser after map or protocol changes. Automated tests and performance-testing code are not included.

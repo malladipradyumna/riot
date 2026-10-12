@@ -18,4 +18,4 @@ The browser includes protobuf.js in `assets/protocol/vendor/protobuf.min.js`, co
 
 ## Dependencies and deployment software
 
-Rust dependencies and the Docker images, Caddy, Node Exporter, VictoriaMetrics, and optional Grafana software retain their own upstream licenses. Refer to their upstream projects or packaged license notices when redistributing them. The root MIT license does not grant rights to third-party software beyond its own license terms.
+Rust dependencies, Docker images, and Caddy retain their own upstream licenses. Refer to their upstream projects or packaged license notices when redistributing them. The root MIT license does not grant rights to third-party software beyond its own license terms.
