@@ -272,7 +272,9 @@ function storeSnapshot(snapshot) {
 
 // Draw slightly behind the server to interpolate between known positions.
 function interpolatedEntities(now, kind) {
-  const displayTime = now + serverClockOffset - INTERPOLATION_DELAY_MS;
+  // Bullets need low-latency rendering so nearby shots remain visible.
+  const delay = kind === 'bullets' ? 0 : INTERPOLATION_DELAY_MS;
+  const displayTime = now + serverClockOffset - delay;
   let before = snapshots[0];
   let after = before;
   for (const snapshot of snapshots) {
@@ -296,9 +298,13 @@ function interpolatedEntities(now, kind) {
     const start = before[kind].get(id);
     const end = after[kind].get(id);
     if (kind === 'bullets') {
-      // New bullets must wait for the delayed playback timeline. Showing their
-      // newest position first makes them jump backward when interpolation starts.
-      if (!start || displayTime < before.serverTime) continue;
+      // Show new shots as soon as a snapshot contains them, even if the
+      // interpolation window begins before they were spawned.
+      if (!start && !end) continue;
+      if (!start) {
+        entities.push(end);
+        continue;
+      }
       if (!end) {
         entities.push(start);
         continue;
@@ -644,21 +650,6 @@ function renderArena(players, bullets, trains, weapons) {
     drawPickupTimer(x, y, progress);
   }
 
-  // Bullet angle is its travel direction, including momentum inherited at launch.
-  for (const bullet of bullets) {
-    const x = bullet.x - camera.x;
-    const y = bullet.y - camera.y;
-    if (x < -12 || y < -12 || x > canvas.width + 12 || y > canvas.height + 12)
-      continue;
-    const sprite = bulletSprite(bullet.weapon_type, '#ffd34d');
-    if (!sprite) continue;
-    context.save();
-    context.translate(x, y);
-    context.rotate(bullet.aim_angle + Math.PI / 2);
-    context.drawImage(sprite, -sprite.width / 2, -sprite.height / 2);
-    context.restore();
-  }
-
   playerCount.textContent = `${players.length} ${players.length === 1 ? 'player' : 'players'}`;
   // Draw each character and its independently aimed gun, then the name label.
   for (const player of players) {
@@ -693,6 +684,21 @@ function renderArena(players, bullets, trains, weapons) {
     const halfWidth = context.measureText(label).width / 2 + 4;
     const labelX = Math.max(halfWidth, Math.min(canvas.width - halfWidth, x));
     context.fillText(label, labelX, y < 40 ? y + 34 : y - 24);
+  }
+
+  // Draw projectiles above characters so shots remain visible at close range.
+  for (const bullet of bullets) {
+    const x = bullet.x - camera.x;
+    const y = bullet.y - camera.y;
+    if (x < -12 || y < -12 || x > canvas.width + 12 || y > canvas.height + 12)
+      continue;
+    const sprite = bulletSprite(bullet.weapon_type, '#ffd34d');
+    if (!sprite) continue;
+    context.save();
+    context.translate(x, y);
+    context.rotate(bullet.aim_angle + Math.PI / 2);
+    context.drawImage(sprite, -sprite.width / 2, -sprite.height / 2);
+    context.restore();
   }
 }
 
