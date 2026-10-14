@@ -39,6 +39,11 @@ const moveStick = document.querySelector('.move-stick');
 const stickKnob = document.querySelector('.stick-knob');
 const aimStick = document.querySelector('.aim-stick');
 const aimKnob = document.querySelector('.aim-knob');
+const touchDevice = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+const mobileLayout = () =>
+  touchDevice ||
+  matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches;
+if (touchDevice) document.body.classList.add('touch-device');
 
 // Match the world viewport to the actual frame shape to avoid letterbox bars.
 function resizeArenaCanvas() {
@@ -165,7 +170,7 @@ function syncInfoPanel() {
   const lines = [
     ['Player', usernameInput.value],
     ['Player ID', localPlayerId],
-    ['Controls', matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches
+    ['Controls', mobileLayout()
       ? 'Left stick walks with a small push and sprints near the edge. Hold and drag the right stick to aim and fire.'
       : 'WASD / arrows, Shift to sprint, F or click to fire'],
     ['Rules', 'Walk over guns to equip them. Riding the train heals and refills ammo.'],
@@ -379,7 +384,7 @@ function drawFrame(now) {
   const round = currentSnapshot.round;
   const intermission = Boolean(round?.intermission);
   board.classList.toggle('intermission', intermission);
-  document.body.classList.toggle('mobile-game', !board.hidden && matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches);
+  document.body.classList.toggle('mobile-game', !board.hidden && mobileLayout());
   roundLabel.textContent = intermission
     ? `Round ${round.number} complete · Next round in`
     : `Round ${round?.number ?? 1} · Time left`;
@@ -1187,7 +1192,7 @@ async function joinGame(gameId) {
       storeSnapshot(snapshot);
       const firstSnapshot = board.hidden;
       board.hidden = false;
-      document.body.classList.toggle('mobile-game', matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches);
+      document.body.classList.toggle('mobile-game', mobileLayout());
       if (firstSnapshot) canvas.focus({ preventScroll: true });
       if (animationFrame === null)
         animationFrame = requestAnimationFrame(drawFrame);
