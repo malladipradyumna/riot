@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -15,6 +15,15 @@ use tokio::{
     time,
 };
 use uuid::Uuid;
+
+static ROOM_WORDS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    include_str!("../../assets/basic_english_2000.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|word| !word.is_empty() && word.bytes().all(|byte| byte.is_ascii_alphabetic()))
+        .map(str::to_ascii_lowercase)
+        .collect()
+});
 
 // Keep the loop here; the larger ECS systems have their own files below.
 mod combat;
@@ -65,6 +74,21 @@ impl GameManager {
         handle
     }
 
+    // Pick and register a three-word room ID while the manager lock is held.
+    // Checking the directory here makes allocation atomic across simultaneous creates.
+    pub fn new_random_game(
+        &mut self,
+        manager: Arc<Mutex<GameManager>>,
+        bot_settings: crate::bot::Settings,
+    ) -> GameHandle {
+        loop {
+            let game_id = random_room_id();
+            if !self.game_senders.contains_key(&game_id) {
+                return self.new_game(game_id, manager, bot_settings);
+            }
+        }
+    }
+
     // Clone channel handles so callers can send without keeping the manager locked.
     pub fn get_sender_for_gameid(&self, game_id: &str) -> Option<GameHandle> {
         self.game_senders.get(game_id).cloned()
@@ -74,6 +98,16 @@ impl GameManager {
     pub fn remove_game(&mut self, game_id: &str) {
         self.game_senders.remove(game_id);
     }
+}
+
+fn random_room_id() -> GameId {
+    let first = fastrand::usize(0..ROOM_WORDS.len());
+    let second = fastrand::usize(0..ROOM_WORDS.len());
+    let third = fastrand::usize(0..ROOM_WORDS.len());
+    format!(
+        "{}-{}-{}",
+        ROOM_WORDS[first], ROOM_WORDS[second], ROOM_WORDS[third]
+    )
 }
 
 // Only run() and the methods it calls touch this state, so the world needs no mutex.

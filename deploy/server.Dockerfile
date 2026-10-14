@@ -4,6 +4,7 @@ WORKDIR /build
 COPY server/Cargo.toml server/Cargo.lock server/build.rs ./server/
 COPY server/src ./server/src
 COPY assets/protocol ./assets/protocol
+COPY assets/basic_english_2000.txt ./assets/basic_english_2000.txt
 RUN cargo build --locked --release --manifest-path server/Cargo.toml --bin server
 
 # The runtime image contains the binary and shared assets, not the Rust toolchain.

@@ -1,5 +1,10 @@
 # Client assets
 
+`basic_english_2000.txt` supplies words for three-word game room IDs. The server
+lowercases alphabetic entries and checks each generated ID against active rooms.
+The word list is from the
+[Florida State University basic English words dataset](https://people.sc.fsu.edu/~jburkardt/datasets/words/basic_english_2000.txt).
+
 ```
 characters/
   blue/player.png

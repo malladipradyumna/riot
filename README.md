@@ -4,7 +4,7 @@ A browser multiplayer shooter with a Rust authoritative server, Protobuf WebSock
 
 ## Features
 
-- Create or join a game by ID and choose one of nine characters.
+- Create a game with a random three-word ID or join by ID, and choose one of nine characters.
 - Start with a pistol; walk over randomly spawned guns to equip them.
 - Ground guns expire after 30 seconds, shown by a filling square border.
 - Server-owned movement, bullets, damage, respawning, kills, and deaths.

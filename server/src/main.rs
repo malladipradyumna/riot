@@ -6,7 +6,6 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
-use uuid::Uuid;
 
 use crate::{
     game::{GameHandle, GameManager, GameMessage},
@@ -176,11 +175,7 @@ async fn handle_client_msg(
         let sender = {
             let mut manager = game_manager.lock().map_err(|_| "MANAGER_UNAVAILABLE")?;
             match game_id {
-                None => manager.new_game(
-                    Uuid::new_v4().to_string(),
-                    Arc::clone(game_manager),
-                    *bot_settings,
-                ),
+                None => manager.new_random_game(Arc::clone(game_manager), *bot_settings),
                 Some(id) => manager.get_sender_for_gameid(id).ok_or("GAME_NOT_FOUND")?,
             }
         };

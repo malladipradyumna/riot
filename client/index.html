@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <title>RIOT — Join a game</title>
     <link rel="stylesheet" href="src/styles.css" />
     <!-- Defer preserves dependency order: runtime, wire format, assets, then gameplay UI. -->
@@ -186,6 +186,17 @@
       </div>
       <!-- The board stays hidden until Welcome and a snapshot arrive. -->
       <section id="board" hidden aria-label="Game board">
+        <button id="mobile-info-toggle" type="button" aria-label="Open game menu" aria-expanded="false"><span aria-hidden="true">i</span><small>MENU</small></button>
+        <aside id="mobile-info" aria-label="Game information" hidden>
+          <div class="info-panel-heading"><strong>Game menu</strong><button id="close-game-info" type="button" aria-label="Close game menu">×</button></div>
+          <section class="game-share-card" aria-label="Invite players">
+            <span class="info-eyebrow">INVITE FRIENDS</span>
+            <label for="info-game-id">ROOM CODE</label>
+            <div class="info-game-id-row"><input id="info-game-id" readonly /><button id="copy-info-game-id" type="button">Copy code</button></div>
+            <small>Share this code so friends can join your game.</small>
+          </section>
+          <div id="mobile-info-content"></div>
+        </aside>
         <!-- Health/ammo are authoritative values; FPS measures local drawing only. -->
         <div class="board-heading">
           <div class="health-hud">
@@ -232,6 +243,17 @@
                 <i class="dot train"></i>Train</small
               >
             </aside>
+            <div class="touch-controls" aria-label="Touch game controls">
+              <div class="move-stick" aria-label="Move joystick">
+                <span class="stick-base"></span>
+                <span class="stick-knob"></span>
+              </div>
+              <div class="aim-stick" aria-label="Aim and fire joystick">
+                <span class="stick-base"></span>
+                <span class="stick-knob aim-knob"></span>
+                <span class="aim-label">AIM<br />FIRE</span>
+              </div>
+            </div>
           </div>
           <!-- Human and bot rows are rebuilt from the current server scores. -->
           <aside class="scoreboard-panel" aria-labelledby="scoreboard-title">
@@ -254,6 +276,7 @@
           it; ground guns expire after 30 seconds. Step onto any train carriage
           to ride, heal, and refill ammo.
         </p>
+        <div class="mobile-standings" aria-label="Live standings"></div>
       </section>
     </main>
   </body>

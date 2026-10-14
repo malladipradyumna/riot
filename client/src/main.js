@@ -16,6 +16,7 @@ const board = document.querySelector('#board');
 const canvas = document.querySelector('#arena');
 const context = canvas.getContext('2d');
 context.imageSmoothingEnabled = false;
+const ARENA_LOGICAL_HEIGHT = 600;
 const playerCount = document.querySelector('#player-count');
 const fpsDisplay = document.querySelector('#fps');
 const minimap = document.querySelector('#minimap');
@@ -26,6 +27,32 @@ const ammoValue = document.querySelector('#ammo-value');
 const scoreboardBody = document.querySelector('#scoreboard-body');
 const roundLabel = document.querySelector('#round-label');
 const roundCountdown = document.querySelector('#round-countdown');
+const mobileInfoToggle = document.querySelector('#mobile-info-toggle');
+const mobileInfo = document.querySelector('#mobile-info');
+const mobileInfoContent = document.querySelector('#mobile-info-content');
+const infoGameId = document.querySelector('#info-game-id');
+const copyInfoGameIdButton = document.querySelector('#copy-info-game-id');
+const closeGameInfoButton = document.querySelector('#close-game-info');
+const mobileStandings = document.querySelector('.mobile-standings');
+const boardNote = document.querySelector('.board-note');
+const moveStick = document.querySelector('.move-stick');
+const stickKnob = document.querySelector('.stick-knob');
+const aimStick = document.querySelector('.aim-stick');
+const aimKnob = document.querySelector('.aim-knob');
+
+// Match the world viewport to the actual frame shape to avoid letterbox bars.
+function resizeArenaCanvas() {
+  const bounds = canvas.getBoundingClientRect();
+  if (!bounds.width || !bounds.height) return;
+  const width = Math.max(1, Math.round(ARENA_LOGICAL_HEIGHT * bounds.width / bounds.height));
+  if (canvas.width !== width || canvas.height !== ARENA_LOGICAL_HEIGHT) {
+    canvas.width = width;
+    canvas.height = ARENA_LOGICAL_HEIGHT;
+    context.imageSmoothingEnabled = false;
+  }
+}
+new ResizeObserver(resizeArenaCanvas).observe(canvas.parentElement);
+window.addEventListener('resize', resizeArenaCanvas);
 
 // These dimensions match assets/maps/arena.txt and the server constants.
 const MAP_WIDTH = 4800;
@@ -51,6 +78,8 @@ let copyFeedbackTimer = null;
 let damageAnimation = null;
 let lastLocalHealth = null;
 let lastLocalRespawn = null;
+const bloodPatches = [];
+const BLOOD_PATCH_LIFETIME_MS = 5000;
 
 // Restart the one-second damage overlay instead of stacking animations.
 function showDamageFlash() {
@@ -61,8 +90,8 @@ function showDamageFlash() {
   });
 }
 
-// Prefer the clipboard API; selection keeps copying usable on plain-HTTP LAN sessions.
-copyGameIdButton.addEventListener('click', async () => {
+// Use Clipboard API when allowed; the temporary field also works on plain-HTTP LAN pages.
+async function copyRoomId(button) {
   if (!joinedGameId.value) return;
   let copied = false;
   try {
@@ -74,20 +103,32 @@ copyGameIdButton.addEventListener('click', async () => {
     /* Plain HTTP can block Clipboard API; use the selected-input fallback. */
   }
   if (!copied) {
-    joinedGameId.focus();
-    joinedGameId.select();
-    copied = document.execCommand('copy');
+    const fallback = document.createElement('textarea');
+    fallback.value = joinedGameId.value;
+    fallback.setAttribute('readonly', '');
+    fallback.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;font-size:16px';
+    document.body.append(fallback);
+    fallback.focus();
+    fallback.select();
+    try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
+    fallback.remove();
   }
-  copyGameIdButton.textContent = copied ? 'Copied!' : 'Select + copy';
+  const originalLabel = button.dataset.copyLabel || button.textContent;
+  button.textContent = copied ? 'Copied!' : 'Copy failed';
   clearTimeout(copyFeedbackTimer);
   copyFeedbackTimer = setTimeout(() => {
-    copyGameIdButton.textContent = 'Copy';
+    button.textContent = originalLabel;
   }, 1500);
-});
+}
+copyGameIdButton.dataset.copyLabel = copyGameIdButton.textContent;
+copyInfoGameIdButton.dataset.copyLabel = copyInfoGameIdButton.textContent;
+copyGameIdButton.addEventListener('click', () => copyRoomId(copyGameIdButton));
+copyInfoGameIdButton.addEventListener('click', () => copyRoomId(copyInfoGameIdButton));
 
 // Mouse coordinates are on the page; aiming needs coordinates in the game world.
 function updateAim(player) {
   if (!player) return;
+  if (aimPointerId !== null) return;
   let targetX = camera.x + canvas.width / 2;
   let targetY = camera.y + canvas.height / 2;
   if (mousePosition) {
@@ -106,6 +147,48 @@ function updateAim(player) {
   const dy = targetY - player.y;
   if (dx !== 0 || dy !== 0) aimAngle = Math.atan2(dy, dx);
   else if (aimAngle === null) aimAngle = 0;
+}
+
+mobileInfoToggle.addEventListener('click', () => {
+  const open = mobileInfo.hidden;
+  mobileInfo.hidden = !open;
+  mobileInfoToggle.setAttribute('aria-expanded', String(open));
+});
+closeGameInfoButton.addEventListener('click', () => {
+  mobileInfo.hidden = true;
+  mobileInfoToggle.setAttribute('aria-expanded', 'false');
+});
+
+function syncInfoPanel() {
+  infoGameId.value = joinedGameId.value;
+  mobileInfoContent.replaceChildren();
+  const lines = [
+    ['Player', usernameInput.value],
+    ['Player ID', localPlayerId],
+    ['Controls', matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches
+      ? 'Left stick walks with a small push and sprints near the edge. Hold and drag the right stick to aim and fire.'
+      : 'WASD / arrows, Shift to sprint, F or click to fire'],
+    ['Rules', 'Walk over guns to equip them. Riding the train heals and refills ammo.'],
+  ];
+  for (const [label, value] of lines) {
+    const line = document.createElement('p');
+    line.textContent = `${label}: ${value ?? '—'}`;
+    mobileInfoContent.append(line);
+  }
+}
+
+// Keep mobile's always-visible standings in sync with the desktop scoreboard.
+function syncMobileStandings() {
+  mobileStandings.innerHTML = '';
+  const title = document.createElement('strong');
+  title.textContent = 'Standings';
+  mobileStandings.append(title);
+  for (const row of scoreboardBody.rows) {
+    const item = document.createElement('div');
+    item.className = row.className;
+    item.textContent = `${row.cells[0]?.textContent ?? ''}  K/D ${row.cells[1]?.textContent ?? 0}/${row.cells[2]?.textContent ?? 0}`;
+    mobileStandings.append(item);
+  }
 }
 
 // Ignore old frames so a delayed message cannot rewind the game.
@@ -296,6 +379,7 @@ function drawFrame(now) {
   const round = currentSnapshot.round;
   const intermission = Boolean(round?.intermission);
   board.classList.toggle('intermission', intermission);
+  document.body.classList.toggle('mobile-game', !board.hidden && matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches);
   roundLabel.textContent = intermission
     ? `Round ${round.number} complete · Next round in`
     : `Round ${round?.number ?? 1} · Time left`;
@@ -356,6 +440,7 @@ function renderScoreboard(players) {
     return row;
   });
   scoreboardBody.replaceChildren(...rows);
+  syncMobileStandings();
 }
 
 // Clear the old session, animation, sounds, and HUD before leaving or joining again.
@@ -384,6 +469,7 @@ function resetRendering() {
   clearTimeout(copyFeedbackTimer);
   copyGameIdButton.textContent = 'Copy';
   scoreboardBody.replaceChildren();
+  bloodPatches.length = 0;
   minimapContext.clearRect(0, 0, minimap.width, minimap.height);
   clearTimeout(killAnnouncementTimer);
   killAnnouncementTimer = null;
@@ -478,6 +564,31 @@ function renderArena(players, bullets, trains, weapons) {
   context.strokeRect(2 - camera.x, 2 - camera.y, MAP_WIDTH - 4, MAP_HEIGHT - 4);
   context.font = '12px monospace';
   context.textAlign = 'center';
+
+  // Death marks are local cosmetic effects and fade away after five seconds.
+  const bloodNow = performance.now();
+  for (let index = bloodPatches.length - 1; index >= 0; index--) {
+    const patch = bloodPatches[index];
+    const age = bloodNow - patch.createdAt;
+    if (age >= BLOOD_PATCH_LIFETIME_MS) {
+      bloodPatches.splice(index, 1);
+      continue;
+    }
+    const x = patch.x - camera.x;
+    const y = patch.y - camera.y;
+    if (x < -60 || y < -60 || x > canvas.width + 60 || y > canvas.height + 60) continue;
+    context.save();
+    context.globalAlpha = 0.82 * (1 - age / BLOOD_PATCH_LIFETIME_MS);
+    context.fillStyle = '#8f1018';
+    context.beginPath();
+    context.ellipse(x, y, 17, 10, patch.rotation, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = '#bd2024';
+    context.beginPath();
+    context.ellipse(x - 3, y - 2, 10, 5, patch.rotation - 0.3, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
 
   // Trains are drawn from snapshots and rotated around their carriage centers.
   for (const train of trains) {
@@ -648,6 +759,9 @@ let socket = null;
 let inputTimer = null;
 let leavingGame = false;
 const pressedKeys = new Set();
+let movePointerId = null;
+let aimPointerId = null;
+let touchMove = { x: 0, y: 0 };
 const gameKeys = new Set([
   'KeyW',
   'KeyA',
@@ -668,6 +782,11 @@ function stopInput() {
   inputTimer = null;
   pressedKeys.clear();
   mouseFiring = false;
+  movePointerId = null;
+  aimPointerId = null;
+  touchMove = { x: 0, y: 0 };
+  stickKnob.style.transform = '';
+  aimKnob.style.transform = '';
 }
 
 // Send held keys, not movement distances. The server decides how far we move.
@@ -689,18 +808,91 @@ function sendInput() {
       timestamp_millis: Date.now(),
       player_id: localPlayerId,
       game_id: joinedGameId.value,
-      up: pressedKeys.has('KeyW') || pressedKeys.has('ArrowUp'),
-      down: pressedKeys.has('KeyS') || pressedKeys.has('ArrowDown'),
-      left: pressedKeys.has('KeyA') || pressedKeys.has('ArrowLeft'),
-      right: pressedKeys.has('KeyD') || pressedKeys.has('ArrowRight'),
-      shooting: pressedKeys.has('KeyF') || mouseFiring,
-      sprinting: pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight'),
+      up: pressedKeys.has('KeyW') || pressedKeys.has('ArrowUp') || touchMove.y < -0.28,
+      down: pressedKeys.has('KeyS') || pressedKeys.has('ArrowDown') || touchMove.y > 0.28,
+      left: pressedKeys.has('KeyA') || pressedKeys.has('ArrowLeft') || touchMove.x < -0.28,
+      right: pressedKeys.has('KeyD') || pressedKeys.has('ArrowRight') || touchMove.x > 0.28,
+      shooting: pressedKeys.has('KeyF') || mouseFiring || pressedKeys.has('TouchFire') || aimPointerId !== null,
+      sprinting: pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight') || Math.hypot(touchMove.x, touchMove.y) > 0.82,
       aim_angle: aimAngle,
     },
   };
   socket.send(encodeClientMessage(message));
 }
 
+function updateMoveStick(event) {
+  const rect = moveStick.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const max = rect.width * 0.32;
+  const dx = event.clientX - centerX;
+  const dy = event.clientY - centerY;
+  const distance = Math.hypot(dx, dy);
+  const scale = distance > max ? max / distance : 1;
+  const x = dx * scale;
+  const y = dy * scale;
+  touchMove = { x: x / max, y: y / max };
+  stickKnob.style.transform = `translate(${x}px, ${y}px)`;
+}
+
+moveStick.addEventListener('pointerdown', (event) => {
+  if (localPlayerId === null || leavingGame || currentSnapshot?.round?.intermission) return;
+  event.preventDefault();
+  movePointerId = event.pointerId;
+  moveStick.setPointerCapture(event.pointerId);
+  updateMoveStick(event);
+  unlockAudio();
+});
+moveStick.addEventListener('pointermove', (event) => {
+  if (event.pointerId === movePointerId) updateMoveStick(event);
+});
+function releaseMoveStick(event) {
+  if (event.pointerId !== movePointerId) return;
+  movePointerId = null;
+  touchMove = { x: 0, y: 0 };
+  stickKnob.style.transform = '';
+  sendInput();
+}
+moveStick.addEventListener('pointerup', releaseMoveStick);
+moveStick.addEventListener('pointercancel', releaseMoveStick);
+moveStick.addEventListener('lostpointercapture', releaseMoveStick);
+
+function updateAimStick(event) {
+  const rect = aimStick.getBoundingClientRect();
+  const dx = event.clientX - (rect.left + rect.width / 2);
+  const dy = event.clientY - (rect.top + rect.height / 2);
+  const max = rect.width * 0.32;
+  const distance = Math.hypot(dx, dy);
+  const scale = distance > max ? max / distance : 1;
+  const x = dx * scale;
+  const y = dy * scale;
+  aimKnob.style.transform = `translate(${x}px, ${y}px)`;
+  if (distance > 4) aimAngle = Math.atan2(dy, dx);
+}
+
+aimStick.addEventListener('pointerdown', (event) => {
+  if (localPlayerId === null || leavingGame || currentSnapshot?.round?.intermission) return;
+  event.preventDefault();
+  aimPointerId = event.pointerId;
+  aimStick.setPointerCapture(event.pointerId);
+  mousePosition = null;
+  updateAimStick(event);
+  unlockAudio();
+  sendInput();
+});
+aimStick.addEventListener('pointermove', (event) => {
+  if (event.pointerId !== aimPointerId) return;
+  updateAimStick(event);
+});
+function releaseAim(event) {
+  if (event.pointerId !== aimPointerId) return;
+  aimPointerId = null;
+  aimKnob.style.transform = '';
+  sendInput();
+}
+aimStick.addEventListener('pointerup', releaseAim);
+aimStick.addEventListener('pointercancel', releaseAim);
+aimStick.addEventListener('lostpointercapture', releaseAim);
 // Record held keys; fire presses are also sent immediately to preserve quick taps.
 window.addEventListener('keydown', (event) => {
   if (
@@ -902,6 +1094,12 @@ async function joinGame(gameId) {
     if (message.PlayerKilled) {
       const kill = message.PlayerKilled;
       if (welcomed && !leavingGame && kill.game_id === joinedGameId.value) {
+        bloodPatches.push({
+          x: kill.position.x,
+          y: kill.position.y,
+          createdAt: performance.now(),
+          rotation: Math.random() * Math.PI,
+        });
         playSound(
           'PlayerDeath',
           kill.position,
@@ -969,11 +1167,15 @@ async function joinGame(gameId) {
       welcomed = true;
       localPlayerId = message.Welcome.player_id;
       joinedGameId.value = message.Welcome.game_id;
+      syncInfoPanel();
+      mobileInfo.hidden = true;
+      mobileInfoToggle.setAttribute('aria-expanded', 'false');
       playerInfo.textContent = `Player ID: ${message.Welcome.player_id}`;
       session.hidden = false;
       status.textContent = `Joined as ${usernameInput.value}.`;
       form.hidden = true;
       lobby.classList.add('in-game');
+      document.body.classList.add('game-session');
       stopInput();
       inputTimer = setInterval(sendInput, 30);
     }
@@ -985,6 +1187,7 @@ async function joinGame(gameId) {
       storeSnapshot(snapshot);
       const firstSnapshot = board.hidden;
       board.hidden = false;
+      document.body.classList.toggle('mobile-game', matchMedia('(max-width: 760px), (hover: none) and (pointer: coarse)').matches);
       if (firstSnapshot) canvas.focus({ preventScroll: true });
       if (animationFrame === null)
         animationFrame = requestAnimationFrame(drawFrame);
@@ -1006,6 +1209,8 @@ async function joinGame(gameId) {
     setBusy(false);
     session.hidden = true;
     board.hidden = true;
+    document.body.classList.remove('mobile-game');
+    document.body.classList.remove('game-session');
     form.hidden = false;
     lobby.classList.remove('in-game');
     resetRendering();

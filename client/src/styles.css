@@ -480,3 +480,184 @@ button:focus-visible {
 #bot-settings input {
   margin-bottom: 12px;
 }
+
+#mobile-info-toggle,
+#mobile-info,
+.touch-controls,
+.mobile-standings { display: none; }
+
+.info-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: 2px; }
+.info-panel-heading > strong { font-size: 14px; }
+.info-panel-heading button { width: 32px; min-height: 32px; padding: 0; border-color: #77765b; background: #22271c; color: var(--ink); font-size: 20px; line-height: 1; }
+.game-share-card { padding: 12px; border: 1px solid #77765b; background: linear-gradient(145deg, #303828, #1b2118); box-shadow: inset 0 0 0 1px #ffffff08; }
+.info-eyebrow { display: block; margin-bottom: 8px; color: #a9c789; font-size: 9px; letter-spacing: 2px; }
+.game-share-card label { margin-bottom: 5px; color: #c6bd9a; font-size: 10px; }
+.info-game-id-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; width: 100%; }
+.info-game-id-row input { min-height: 40px; padding: 6px; border-color: #6a7657; color: #f0dda5; font-size: clamp(10px, 3.1vw, 13px); font-weight: bold; letter-spacing: 0; }
+.info-game-id-row button { min-height: 40px; padding: 6px 8px; font-size: 9px; letter-spacing: .4px; }
+.game-share-card > small { display: block; margin-top: 8px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+#mobile-info-content { margin-top: 12px; padding-top: 4px; border-top: 1px solid #414632; }
+#mobile-info-content p { margin: 8px 0 0; color: #c5bea2; font-size: 11px; line-height: 1.45; }
+#mobile-info-content p strong { color: var(--accent); }
+#mobile-info-toggle { grid-auto-flow: column; gap: 6px; width: auto; min-width: 70px; padding: 0 10px; border-radius: 18px; }
+#mobile-info-toggle > span { font-family: Georgia, serif; font-size: 21px; font-style: italic; line-height: 1; }
+#mobile-info-toggle > small { font-size: 9px; letter-spacing: 1px; }
+
+/* Compact play view keeps the arena in the first viewport on laptop screens. */
+@media (min-width: 761px) {
+  body.game-session { display: block; min-height: 100vh; padding: 0; overflow: hidden; }
+  .lobby.in-game { width: 100%; max-width: none; height: 100vh; padding: 8px 18px; border: 0; box-shadow: none; }
+  .lobby.in-game > h1,
+  .lobby.in-game > p,
+  .lobby.in-game #lobby-form,
+  .lobby.in-game #status,
+  .lobby.in-game #session { display: none !important; }
+  #board { position: relative; display: flex; flex-direction: column; height: 100%; margin: 0; padding-top: 38px; }
+  #mobile-info-toggle { display: grid; place-items: center; position: absolute; z-index: 12; top: 2px; right: 2px; min-height: 34px; }
+  #mobile-info:not([hidden]) { display: block; position: absolute; z-index: 11; top: 42px; right: 2px; width: min(340px, calc(100vw - 32px)); padding: 14px; border: 2px solid var(--line); background: #191e15f5; box-shadow: 4px 4px #080b07; }
+  .board-heading { flex: none; margin: 0 0 4px; padding: 5px 10px; }
+  .round-hud { flex: none; margin: 0 0 4px; }
+  #round-label { display: inline; margin-right: 10px; font-size: 11px; }
+  #round-countdown { display: inline; font-size: 18px; }
+  #kill-announcement { flex: none; margin: 0 0 3px; font-size: 11px; }
+  .game-layout { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 232px; }
+  .arena-frame { height: 100%; min-height: 0; overflow: hidden; }
+  #arena { width: 100%; height: 100%; }
+  .scoreboard-panel { max-height: 100%; overflow: auto; }
+  .board-note { display: none; }
+  #board.intermission { overflow: auto; }
+  #board.intermission .game-layout { display: block; flex: none; margin: 12px auto; }
+  #board.intermission .scoreboard-panel { max-height: 58vh; }
+}
+
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  body.mobile-game {
+    display: block;
+    min-height: 100dvh;
+    padding: 0;
+    overflow: hidden;
+    background: #10140f;
+    touch-action: manipulation;
+  }
+  body.mobile-game .lobby.in-game {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    overflow: hidden;
+    border: 0;
+    box-shadow: none;
+    background: #151a13;
+  }
+  body.mobile-game .lobby.in-game > h1,
+  body.mobile-game .lobby.in-game > p,
+  body.mobile-game .lobby.in-game #lobby-form,
+  body.mobile-game .lobby.in-game #status,
+  body.mobile-game .lobby.in-game #session { display: none !important; }
+  #board { position: relative; display: flex; flex-direction: column; height: 100%; margin: 0; padding-top: 34px; }
+  #mobile-info-toggle {
+    display: grid;
+    place-items: center;
+    position: absolute;
+    z-index: 12;
+    top: max(4px, env(safe-area-inset-top));
+    right: max(4px, env(safe-area-inset-right));
+    min-height: 34px;
+  }
+  #mobile-info:not([hidden]) {
+    display: block;
+    position: absolute;
+    z-index: 11;
+    top: 42px;
+    right: 4px;
+    width: min(340px, calc(100vw - 24px));
+    padding: 14px;
+    border: 2px solid var(--line);
+    background: #191e15f5;
+    box-shadow: 4px 4px #080b07;
+  }
+  #mobile-info p { margin: 10px 0 0; overflow-wrap: anywhere; font-size: 12px; }
+  .board-heading { flex: none; margin: 0 0 5px; padding: 6px 8px; }
+  .health-hud { width: 45%; max-width: none; }
+  .health-hud label { font-size: 10px; }
+  .board-stats { flex-direction: row; gap: 8px; font-size: 10px; }
+  #fps { display: none; }
+  .round-hud { flex: none; margin: 1px 0 4px; letter-spacing: 1px; }
+  #round-label { display: inline; margin-right: 8px; font-size: 11px; }
+  #round-countdown { display: inline; font-size: 16px; }
+  #kill-announcement { flex: none; margin: 0 0 3px; font-size: 10px; }
+  .game-layout { display: block; min-height: 0; flex: 1; }
+  .arena-frame { height: 100%; border-width: 1px; overflow: hidden; }
+  #arena { width: 100%; height: 100%; object-fit: contain; }
+  .touch-controls { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+  .minimap-panel { top: 6px; right: 6px; bottom: auto; padding: 3px; }
+  .minimap-panel > span, .minimap-panel small { display: none; }
+  #minimap { width: clamp(92px, 23vw, 138px); height: auto; aspect-ratio: 8 / 3; }
+  .scoreboard-panel, .board-note { display: none; }
+  .mobile-standings { display: flex; flex: none; gap: 0; align-items: center; max-width: 100%; overflow-x: auto; padding: 5px 2px; color: #d6d0b5; font-size: 10px; white-space: nowrap; }
+  .mobile-standings strong { color: var(--accent); text-transform: uppercase; }
+  .mobile-standings > div { padding: 0 9px; border-left: 1px solid #77765b; }
+  .mobile-standings > div.local-player { color: #a9c789; }
+  .touch-controls { display: block; position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+  .move-stick {
+    position: absolute;
+    z-index: 4;
+    left: max(22px, env(safe-area-inset-left));
+    bottom: max(24px, env(safe-area-inset-bottom));
+    width: clamp(118px, 22vw, 158px);
+    height: clamp(118px, 22vw, 158px);
+    touch-action: none;
+    user-select: none;
+    pointer-events: auto;
+  }
+  .stick-base {
+    position: absolute;
+    inset: 0;
+    border: 2px solid #e6d69d90;
+    border-radius: 50%;
+    background: #18201635;
+    box-shadow: inset 0 0 18px #05080530, 0 2px 6px #0004;
+  }
+  .stick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 42%;
+    height: 42%;
+    margin: -21% 0 0 -21%;
+    border: 2px solid #f0dda5;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #857b52b0, #383b2c88 72%);
+    box-shadow: 0 2px 6px #0006, inset 0 1px #fff4;
+    pointer-events: none;
+  }
+  .aim-stick {
+    position: absolute;
+    z-index: 5;
+    right: max(22px, env(safe-area-inset-right));
+    bottom: max(26px, env(safe-area-inset-bottom));
+    width: clamp(118px, 22vw, 158px);
+    height: clamp(118px, 22vw, 158px);
+    touch-action: none;
+    user-select: none;
+    pointer-events: auto;
+  }
+  .aim-knob { border-color: #f2c988; background: radial-gradient(circle at 35% 30%, #ae654eb0, #66382e88 72%); }
+  .aim-label { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #f2e6bd9c; font-size: 8px; line-height: 1.2; letter-spacing: 1px; text-align: center; pointer-events: none; }
+  #board.intermission { overflow-y: auto; }
+  #board.intermission .round-hud { margin: 20px 0; }
+  #board.intermission #round-countdown { display: block; font-size: clamp(44px, 13vw, 76px); }
+  #board.intermission .game-layout { flex: none; display: block; }
+  #board.intermission .scoreboard-panel { display: block; padding: 12px; }
+  #board.intermission .scoreboard-panel table { font-size: 13px; }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  #board { padding-top: 28px; }
+  .board-heading { padding: 3px 8px; }
+  .mobile-standings { padding: 2px; }
+  .move-stick { width: 108px; height: 108px; bottom: max(12px, env(safe-area-inset-bottom)); }
+  .aim-stick { width: 108px; height: 108px; bottom: max(12px, env(safe-area-inset-bottom)); }
+}

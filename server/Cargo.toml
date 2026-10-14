@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 hecs = "0.11.2"
+fastrand = "2.5.0"
 tokio = { version = "1.53.2", features = ["full"] }
 tokio-tungstenite = "0.26"
 futures-util = "0.3"
